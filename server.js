@@ -669,6 +669,34 @@ if (DEBUG_SHOW_KEYS_ON_START) {
   console.log("[DEBUG] AES_KEY(S) raw:", raw);
 }
 
+const LINK_HMAC_KEY = process.env.LINK_HMAC_KEY
+  ? Buffer.from(process.env.LINK_HMAC_KEY, "utf8")
+  : AES_KEYS[0];
+
+function timingSafeEqualStr(a, b) {
+  const aBuf = Buffer.from(String(a || ""));
+  const bBuf = Buffer.from(String(b || ""));
+  if (aBuf.length !== bBuf.length) return false;
+  try { return crypto.timingSafeEqual(aBuf, bBuf); } catch { return false; }
+}
+
+function computeLinkHmac(url, destHost) {
+  if (!url || !destHost || !LINK_HMAC_KEY) return null;
+  try {
+    return crypto.createHmac("sha256", LINK_HMAC_KEY)
+      .update(`${destHost}|${url}`)
+      .digest("base64url");
+  } catch {
+    return null;
+  }
+}
+
+function verifyLinkHmac(url, destHost, provided) {
+  const expected = computeLinkHmac(url, destHost);
+  if (!expected || !provided) return { ok: false, expected };
+  return { ok: timingSafeEqualStr(expected, provided), expected };
+}
+
 // ================== CHALLENGE TOKEN FUNCTIONS ==================
 function hashIpForToken(ip) {
   try {
@@ -1747,6 +1775,7 @@ async function verifyTurnstileAndRateLimit(req, baseString) {
 
 function decryptAndParseUrl(req, baseString) {
   const ip = getClientIp(req);
+  const linkHash = req.query.lh ? String(req.query.lh) : hashFirstSeg(baseString);
   
   const { mainPart, emailPart: emailPart0, delimUsed } =
     splitCipherAndEmail(baseString, decodeB64urlLoose, isLikelyEmail);
@@ -1764,19 +1793,19 @@ function decryptAndParseUrl(req, baseString) {
     return { error: "Failed to load" };
   }
   
-  let finalUrl = result && result.url;
+  let decryptedPayload = result && result.url;
   let emailPart = emailPart0 || null;
 
-  if (!finalUrl) {
+  if (!decryptedPayload) {
     const bf = bruteSplitDecryptFull(baseString);
     if (bf && bf.url) {
-      finalUrl = bf.url;
+      decryptedPayload = bf.url;
       if (!emailPart) emailPart = bf.emailRaw || null;
       addLog(`[DECRYPT] fallback split used k=${bf.kTried} emailRawLen=${(bf.emailRaw || '').length}`);
     }
   }
 
-  if (!finalUrl) {
+  if (!decryptedPayload) {
     const why = explainDecryptFailure({
       tried: result?.tried || [],
       lastErr: result?.lastErr || null,
@@ -1787,7 +1816,38 @@ function decryptAndParseUrl(req, baseString) {
     return { error: "Failed to load" };
   }
 
-  return { finalUrl, emailPart };
+  let parsedUrl = decryptedPayload;
+  let pinnedHost = null;
+  let hmacChecked = false;
+  let hmacValid = false;
+
+  try {
+    const parsed = JSON.parse(decryptedPayload);
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.url === "string") parsedUrl = parsed.url;
+      if (typeof parsed.dest_host === "string") pinnedHost = parsed.dest_host;
+      if (parsed && typeof parsed.hmac === "string" && pinnedHost && parsedUrl) {
+        const res = verifyLinkHmac(parsedUrl, pinnedHost, parsed.hmac);
+        hmacChecked = true;
+        hmacValid = !!res.ok;
+      }
+    }
+  } catch {}
+
+  if (hmacChecked && !hmacValid) {
+    const ua = req.get("user-agent") || "";
+    const logCtx = {
+      ip: safeLogValue(ip),
+      uaHash: hashUaForToken(ua),
+      linkHash: safeLogValue(linkHash, 64),
+      destHost: safeLogValue(pinnedHost || "-", 120)
+    };
+    addLog(`[DECRYPT] hmac mismatch ${safeLogJson(logCtx, LOG_ENTRY_MAX_LENGTH)}`);
+    addSpacer();
+    return { error: "Failed to load" };
+  }
+
+  return { finalUrl: parsedUrl, emailPart, pinnedHost, linkHash };
 }
 
 function processEmailAndFinalizeUrl(finalUrl, emailPart) {
@@ -1808,11 +1868,57 @@ function processEmailAndFinalizeUrl(finalUrl, emailPart) {
   return finalUrl;
 }
 
-function validateAndRedirect(finalUrl, req, res) {
+function renderInvalidLinkPage(res) {
+  const html = `<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Link unavailable</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;background:#0c1116;color:#e8eef6;padding:24px;}
+  .card{max-width:520px;width:100%;background:#0f172a;border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:24px;box-shadow:0 24px 60px rgba(0,0,0,0.45);} 
+  h1{margin:0 0 8px;font-size:24px;}
+  p{margin:0 0 8px;color:#cbd5e1;}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Link invalid or expired</h1>
+    <p>The link you followed is no longer valid. Please contact the sender for a fresh link.</p>
+    <p>If you believe this is an error, try opening the link from the original message again.</p>
+  </div>
+</body>
+</html>`;
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(400).type("html").send(html);
+}
+
+function logHostPinFailure({ ip, ua, linkHash, pinnedHost, actualHost }) {
+  const logCtx = {
+    ip: safeLogValue(ip),
+    uaHash: hashUaForToken(ua || ""),
+    linkHash: safeLogValue(linkHash || "-", 64),
+    pinnedHost: safeLogValue(pinnedHost || "-", 160),
+    actualHost: safeLogValue(actualHost || "-", 160)
+  };
+  addLog(`[PIN] host mismatch ${safeLogJson(logCtx, LOG_ENTRY_MAX_LENGTH)}`);
+  addSpacer();
+}
+
+function validateAndRedirect(finalUrl, req, res, options = {}) {
   const ip = getClientIp(req);
+  const ua = req.get("user-agent") || "";
+  const pinnedHost = options.pinnedHost || null;
+  const linkHash = options.linkHash || null;
   
   try {
     const hostname = new URL(finalUrl).hostname;
+
+    if (pinnedHost && pinnedHost !== hostname) {
+      logHostPinFailure({ ip, ua, linkHash, pinnedHost, actualHost: hostname });
+      return renderInvalidLinkPage(res);
+    }
+
     const okHost =
       ALLOWLIST_DOMAINS.includes(hostname) ||
       ALLOWLIST_SUFFIXES.some(s => hostname.endsWith(s));
@@ -1876,7 +1982,7 @@ async function handleRedirectCore(req, res, baseString){
   }
 
   const finalUrl = processEmailAndFinalizeUrl(decryptResult.finalUrl, decryptResult.emailPart);
-  return validateAndRedirect(finalUrl, req, res);
+  return validateAndRedirect(finalUrl, req, res, { pinnedHost: decryptResult.pinnedHost, linkHash: decryptResult.linkHash });
 }
 
 // ================== MIDDLEWARE SETUP ==================
