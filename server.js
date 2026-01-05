@@ -720,6 +720,14 @@ function hashUaForToken(ua) {
   }
 }
 
+const CHALLENGE_REASON_MAX_LEN = 80;
+function sanitizeChallengeReason(reason) {
+  if (!reason) return "";
+  return String(reason)
+    .replace(/[^\x20-\x7E]+/g, "")
+    .slice(0, CHALLENGE_REASON_MAX_LEN);
+}
+
 function createChallengeToken(nextEnc, req) {
   const raw = parseInt(process.env.CHALLENGE_TOKEN_TTL_MIN || "10", 10);
   const ttlMin = Number.isFinite(raw) && raw > 0 ? raw : 10; // guard
@@ -1770,6 +1778,17 @@ async function verifyTurnstileAndRateLimit(req, baseString) {
     return { blocked: true, status: 429, message: "Too many requests" };
   }
 
+  if (token) {
+    const challengeReason = sanitizeChallengeReason(req.query.cr || "");
+    const logCtx = {
+      ip: safeLogValue(ip),
+      uaHash: hashUaForToken(ua),
+      linkHash: safeLogValue(linkHash, 64),
+      reason: safeLogValue(challengeReason || "-", 48)
+    };
+    addLog(`[CHALLENGE-OK] ${safeLogJson(logCtx, LOG_ENTRY_MAX_LENGTH)}`);
+  }
+
   return { success: true };
 }
 
@@ -1940,6 +1959,16 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
 }
 
 async function handleRedirectCore(req, res, baseString){
+  const clientIp = getClientIp(req);
+  const ua = req.get("user-agent") || "";
+  const linkHash = req.query.lh ? String(req.query.lh) : hashFirstSeg(baseString);
+  const hasSecUA = !!req.get("sec-ch-ua");
+  const hasFetchSite = !!req.get("sec-fetch-site");
+  const missingSecHeaders = !hasSecUA || !hasFetchSite;
+  const knownBots = ["Googlebot","Bingbot","Slurp","DuckDuckBot","Baiduspider","YandexBot","Sogou","Exabot","facebot","facebookexternalhit","ia_archiver","MJ12bot","AhrefsBot","SemrushBot","DotBot","PetalBot","GPTBot","python-requests","crawler","scrapy","curl","wget","phantomjs","HeadlessChrome"];
+  const isBotUA = knownBots.some(b => ua.toLowerCase().includes(b.toLowerCase()));
+  const hasTurnstileToken = !!req.query.cft;
+
   const securityCheck = checkSecurityPolicies(req);
   if (securityCheck.blocked) {
     if (securityCheck.interstitial) {
@@ -1961,19 +1990,26 @@ async function handleRedirectCore(req, res, baseString){
     return res.status(authCheck.status).send(authCheck.message);
   }
 
-  const ua = req.get("user-agent") || "";
-  const knownBots = ["Googlebot","Bingbot","Slurp","DuckDuckBot","Baiduspider","YandexBot","Sogou","Exabot","facebot","facebookexternalhit","ia_archiver","MJ12bot","AhrefsBot","SemrushBot","DotBot","PetalBot","GPTBot","python-requests","crawler","scrapy","curl","wget","phantomjs","HeadlessChrome"];
-  const isBotUA = knownBots.some(b => ua.toLowerCase().includes(b.toLowerCase()));
-  if (isBotUA) {
-    addLog(`[BOT] blocked ip=${getClientIp(req)} ua="${ua.slice(0,UA_TRUNCATE_LENGTH)}"`);
+  if (isBotUA || missingSecHeaders) {
+    const reason = isBotUA ? "bot_heuristic" : "missing_sec_headers";
+    const logCtx = {
+      ip: safeLogValue(clientIp),
+      uaHash: hashUaForToken(ua),
+      linkHash: safeLogValue(linkHash, 64),
+      isBotUA,
+      missingSecHeaders,
+      hasSecUA: !!hasSecUA,
+      hasFetchSite: !!hasFetchSite
+    };
+    addLog(`[CHALLENGE-TRIGGER] ${safeLogJson(logCtx, LOG_ENTRY_MAX_LENGTH)}`);
     addSpacer();
-    return res.status(403).send("Not allowed");
-  }
 
-  const hasSecUA = !!req.get("sec-ch-ua");
-  const hasFetchSite = !!req.get("sec-fetch-site");
-  if (!hasSecUA || !hasFetchSite) {
-    addLog(`[SUSPECT] ip=${getClientIp(req)} missing_sec_headers=${!hasSecUA||!hasFetchSite}`);
+    if (!hasTurnstileToken) {
+      const nextEnc = encodeURIComponent(baseString);
+      const reasonParam = sanitizeChallengeReason(reason);
+      const reasonSuffix = reasonParam ? `&cr=${encodeURIComponent(reasonParam)}` : "";
+      return res.redirect(302, `/challenge?next=${nextEnc}${reasonSuffix}`);
+    }
   }
 
   const decryptResult = decryptAndParseUrl(req, baseString);
@@ -2434,6 +2470,7 @@ app.use(["/view-log", "/__debug", "/admin"], (req, res, next) => {
 
 app.get("/challenge", limitChallengeView, (req, res) => {
   let nextEnc = "";
+  const challengeReason = sanitizeChallengeReason(req.query.cr || req.query.reason || "");
   
   if (req.query.ct) {
     const payload = verifyChallengeToken(String(req.query.ct), req);
@@ -2455,7 +2492,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
   const linkHash = hashFirstSeg(baseOnly);
   const cdata = `${linkHash}_${Math.floor(Date.now()/1000)}`;
 
-  addLog(`[CHALLENGE] secured next='${nextEnc.slice(0,20)}…' cdata=${cdata.slice(0,16)}…`);
+  addLog(`[CHALLENGE] secured next='${nextEnc.slice(0,20)}…' reason=${safeLogValue(challengeReason || "-", 48)} cdata=${cdata.slice(0,16)}…`);
   addLog(`[TS-PAGE] sitekey=${TURNSTILE_SITEKEY.slice(0,12)}… hash=${linkHash.slice(0,8)}…`);
 
   const challengePayload = {
@@ -2463,7 +2500,8 @@ app.get("/challenge", limitChallengeView, (req, res) => {
     cdata: cdata,
     next: nextEnc,
     lh: linkHash,
-    ts: Date.now()
+    ts: Date.now(),
+    cr: challengeReason || undefined
   };
   
   const encryptedData = encryptChallengeData(challengePayload);
@@ -2763,6 +2801,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
         
         const next = data.payload.next;
         const lh = data.payload.lh;
+        const reason = data.payload.cr || '';
 
         try {
           const decoded = decodeURIComponent(next);
@@ -2772,6 +2811,9 @@ app.get("/challenge", limitChallengeView, (req, res) => {
           const sp = new URLSearchParams(qs);
           sp.delete('cft'); 
           sp.delete('lh');
+          if (reason) {
+            sp.set('cr', reason);
+          }
           sp.append('cft', token);
           sp.append('lh', lh);
           const suffix = '&' + sp.toString();
