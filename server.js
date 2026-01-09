@@ -1030,7 +1030,7 @@ function getASN(req) {
 const ALLOWED_COUNTRIES = (process.env.ALLOWED_COUNTRIES || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const BLOCKED_COUNTRIES = (process.env.BLOCKED_COUNTRIES || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const BLOCKED_ASNS      = (process.env.BLOCKED_ASNS || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
-const EXPECT_HOSTNAME   = process.env.TURNSTILE_EXPECT_HOSTNAME || ".netlify.app,.onrender.com,.vercel.app,tobisaoliverinteriors.com,queserlaiafuente.com"; // main url
+const EXPECT_HOSTNAME   = process.env.TURNSTILE_EXPECT_HOSTNAME || ".netlify.app,.onrender.com,.vercel.app,.tobisaoliverinteriors.com,.queserlaiafuente.com"; // main url
 const MAX_TOKEN_AGE_SEC = parseInt(process.env.TURNSTILE_MAX_TOKEN_AGE_SEC || "90", 10);
 const ENFORCE_ACTION    = (process.env.TURNSTILE_ENFORCE_ACTION || "1") === "1";
 const HEADLESS_BLOCK    = (process.env.HEADLESS_BLOCK || "0") === "1";
