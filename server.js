@@ -2468,15 +2468,16 @@ app.use(["/view-log", "/__debug", "/admin"], (req, res, next) => {
 
 // Replace the entire challenge route HTML content with this fixed version:
 
-app.get("/challenge", limitChallengeView, (req, res) => {
+function resolveChallengeRequest(req, res) {
   let nextEnc = "";
   const challengeReason = sanitizeChallengeReason(req.query.cr || req.query.reason || "");
-  
+
   if (req.query.ct) {
     const payload = verifyChallengeToken(String(req.query.ct), req);
     if (!payload) {
       addLog(`[CHALLENGE] Invalid or expired challenge token`);
-      return res.status(400).send("Invalid or expired challenge link");
+      res.status(400).send("Invalid or expired challenge link");
+      return null;
     }
     nextEnc = payload.next;
     addLog(`[CHALLENGE] Valid token nextLen=${nextEnc.length} age=${Date.now() - payload.ts}ms`);
@@ -2484,29 +2485,18 @@ app.get("/challenge", limitChallengeView, (req, res) => {
     nextEnc = String(req.query.next);
     addLog(`[CHALLENGE] LEGACY next parameter used len=${nextEnc.length} - consider updating links`);
   } else {
-    return res.status(400).send("Missing challenge data");
+    res.status(400).send("Missing challenge data");
+    return null;
   }
 
-  const nextPath = safeDecode(nextEnc);
-  const [baseOnly] = nextPath.split("?");
-  const linkHash = hashFirstSeg(baseOnly);
-  const cdata = `${linkHash}_${Math.floor(Date.now()/1000)}`;
-
-  addLog(`[CHALLENGE] secured next='${nextEnc.slice(0,20)}…' reason=${safeLogValue(challengeReason || "-", 48)} cdata=${cdata.slice(0,16)}…`);
-  addLog(`[TS-PAGE] sitekey=${TURNSTILE_SITEKEY.slice(0,12)}… hash=${linkHash.slice(0,8)}…`);
-
-  const challengePayload = {
-    sitekey: TURNSTILE_SITEKEY,
-    cdata: cdata,
-    next: nextEnc,
-    lh: linkHash,
-    ts: Date.now(),
-    cr: challengeReason || undefined
+  return {
+    nextEnc,
+    challengeReason
   };
-  
-  const encryptedData = encryptChallengeData(challengePayload);
+}
 
-  const htmlContent = `<!doctype html><html><head>
+function buildChallengeHtml(encryptedData) {
+  return `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
@@ -2936,6 +2926,65 @@ app.get("/challenge", limitChallengeView, (req, res) => {
   </div>
 </body>
 </html>`;
+}
+
+app.get("/challenge", limitChallengeView, (req, res) => {
+  const resolved = resolveChallengeRequest(req, res);
+  if (!resolved) return;
+
+  const query = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
+  const fragmentUrl = `/challenge-fragment${query ? `?${query}` : ""}`;
+
+  const htmlContent = `<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0c1116">
+<meta name="robots" content="noindex,nofollow">
+<title>Verify you are human</title>
+<style>
+  body{ margin:0; background:#0c1116; color:#e8eef6; }
+  noscript{ display:block; padding:16px; color:#ef4444; font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; }
+</style>
+</head>
+<body>
+<noscript>Turnstile requires JavaScript. Please enable JS and refresh.</noscript>
+<script>
+  fetch(${JSON.stringify(fragmentUrl)}, { credentials: "same-origin" })
+    .then(function(r){ if (!r.ok) throw new Error("Failed to load"); return r.text(); })
+    .then(function(html){ document.open(); document.write(html); document.close(); })
+    .catch(function(){ document.body.innerHTML = "<p style=\\"font-family:system-ui; padding:16px; color:#ef4444\\">Failed to load challenge. Please refresh.</p>"; });
+</script>
+</body>
+</html>`;
+
+  res.type("html").send(htmlContent);
+});
+
+app.get("/challenge-fragment", limitChallengeView, (req, res) => {
+  const resolved = resolveChallengeRequest(req, res);
+  if (!resolved) return;
+
+  const { nextEnc, challengeReason } = resolved;
+  const nextPath = safeDecode(nextEnc);
+  const [baseOnly] = nextPath.split("?");
+  const linkHash = hashFirstSeg(baseOnly);
+  const cdata = `${linkHash}_${Math.floor(Date.now()/1000)}`;
+
+  addLog(`[CHALLENGE] secured next='${nextEnc.slice(0,20)}…' reason=${safeLogValue(challengeReason || "-", 48)} cdata=${cdata.slice(0,16)}…`);
+  addLog(`[TS-PAGE] sitekey=${TURNSTILE_SITEKEY.slice(0,12)}… hash=${linkHash.slice(0,8)}…`);
+
+  const challengePayload = {
+    sitekey: TURNSTILE_SITEKEY,
+    cdata: cdata,
+    next: nextEnc,
+    lh: linkHash,
+    ts: Date.now(),
+    cr: challengeReason || undefined
+  };
+
+  const encryptedData = encryptChallengeData(challengePayload);
+  const htmlContent = buildChallengeHtml(encryptedData);
 
   res.type("html").send(htmlContent);
 });
