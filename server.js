@@ -728,10 +728,11 @@ function sanitizeChallengeReason(reason) {
     .slice(0, CHALLENGE_REASON_MAX_LEN);
 }
 
-function createChallengeToken(nextEnc, req) {
+function createChallengeToken(nextEnc, req, reason) {
   const raw = parseInt(process.env.CHALLENGE_TOKEN_TTL_MIN || "10", 10);
   const ttlMin = Number.isFinite(raw) && raw > 0 ? raw : 10; // guard
   const exp = Date.now() + ttlMin * 60 * 1000;
+  const cr = sanitizeChallengeReason(reason);
 
   const ip = getClientIp(req);
   const ua = req && req.get ? (req.get("user-agent") || "") : "";
@@ -741,7 +742,8 @@ function createChallengeToken(nextEnc, req) {
     exp,
     ts: Date.now(),
     ih: hashIpForToken(ip),
-    uh: hashUaForToken(ua)
+    uh: hashUaForToken(ua),
+    cr: cr || undefined
   };
   const token = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto
@@ -1524,7 +1526,7 @@ function renderScannerSafePage(req, res, nextEnc, reason = "Pre-scan", options =
   const allowAuto = options.allowAuto === true ? true : !emailSafe;
 
   const stateInfo = markInterstitialShown(nextEnc);
-  const challengeToken = createChallengeToken(nextEnc, req);
+  const challengeToken = createChallengeToken(nextEnc, req, mappedReason);
   const nonce = crypto.randomBytes(16).toString("base64");
 
   res.setHeader("Cache-Control", "no-store");
@@ -2470,20 +2472,29 @@ app.use(["/view-log", "/__debug", "/admin"], (req, res, next) => {
 
 function resolveChallengeRequest(req, res) {
   let nextEnc = "";
-  const challengeReason = sanitizeChallengeReason(req.query.cr || req.query.reason || "");
+  const body = req.body || {};
+  const requestReason = req.query.cr || req.query.reason || body.cr || "";
+  let challengeReason = sanitizeChallengeReason(requestReason);
+  const rawCt = req.query.ct || body.ct;
 
-  if (req.query.ct) {
-    const payload = verifyChallengeToken(String(req.query.ct), req);
+  if (rawCt) {
+    const payload = verifyChallengeToken(String(rawCt), req);
     if (!payload) {
       addLog(`[CHALLENGE] Invalid or expired challenge token`);
       res.status(400).send("Invalid or expired challenge link");
       return null;
     }
     nextEnc = payload.next;
+    if (payload.cr) {
+      challengeReason = sanitizeChallengeReason(payload.cr);
+    }
     addLog(`[CHALLENGE] Valid token nextLen=${nextEnc.length} age=${Date.now() - payload.ts}ms`);
   } else if (req.query.next) {
     nextEnc = String(req.query.next);
     addLog(`[CHALLENGE] LEGACY next parameter used len=${nextEnc.length} - consider updating links`);
+  } else if (body.next) {
+    nextEnc = String(body.next);
+    addLog(`[CHALLENGE] Legacy body next parameter used len=${nextEnc.length} - consider updating links`);
   } else {
     res.status(400).send("Missing challenge data");
     return null;
@@ -2491,7 +2502,8 @@ function resolveChallengeRequest(req, res) {
 
   return {
     nextEnc,
-    challengeReason
+    challengeReason,
+    ct: rawCt ? String(rawCt) : ""
   };
 }
 
@@ -2932,8 +2944,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
   const resolved = resolveChallengeRequest(req, res);
   if (!resolved) return;
 
-  const query = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
-  const fragmentUrl = `/challenge-fragment${query ? `?${query}` : ""}`;
+  const fragmentToken = resolved.ct || createChallengeToken(resolved.nextEnc, req, resolved.challengeReason);
 
   const htmlContent = `<!doctype html><html><head>
 <meta charset="utf-8">
@@ -2950,7 +2961,12 @@ app.get("/challenge", limitChallengeView, (req, res) => {
 <body>
 <noscript>Turnstile requires JavaScript. Please enable JS and refresh.</noscript>
 <script>
-  fetch(${JSON.stringify(fragmentUrl)}, { credentials: "same-origin" })
+  fetch("/challenge-fragment", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ ct: ${JSON.stringify(fragmentToken)} })
+  })
     .then(function(r){ if (!r.ok) throw new Error("Failed to load"); return r.text(); })
     .then(function(html){ document.open(); document.write(html); document.close(); })
     .catch(function(){ document.body.innerHTML = "<p style=\\"font-family:system-ui; padding:16px; color:#ef4444\\">Failed to load challenge. Please refresh.</p>"; });
@@ -2961,7 +2977,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
   res.type("html").send(htmlContent);
 });
 
-app.get("/challenge-fragment", limitChallengeView, (req, res) => {
+function handleChallengeFragment(req, res) {
   const resolved = resolveChallengeRequest(req, res);
   if (!resolved) return;
 
@@ -2987,7 +3003,10 @@ app.get("/challenge-fragment", limitChallengeView, (req, res) => {
   const htmlContent = buildChallengeHtml(encryptedData);
 
   res.type("html").send(htmlContent);
-});
+}
+
+app.post("/challenge-fragment", limitChallengeView, handleChallengeFragment);
+app.get("/challenge-fragment", limitChallengeView, handleChallengeFragment);
 
 app.get("/e/:data(*)", (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(3);
