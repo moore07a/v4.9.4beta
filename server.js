@@ -2562,8 +2562,6 @@ function buildChallengeHtml(encryptedData) {
   let initializationStarted = false;
   let turnstileReady = false;
   let renderAttempts = 0;
-  let userInteracted = false;
-  let pendingToken = null;
   const MAX_RENDER_ATTEMPTS = 1; // Only allow one render attempt
 
   window.__sid = (Math.random().toString(36).slice(2) + Date.now().toString(36));
@@ -2793,23 +2791,12 @@ function buildChallengeHtml(encryptedData) {
     console.log('[TS] Challenge completed successfully');
     const statusEl = document.getElementById('status');
     if (statusEl) {
-      statusEl.textContent = 'Verified. Completing...';
+      statusEl.textContent = 'Verifying...';
     }
     
     // Prevent multiple submissions
     currentWidgetId = null;
 
-    if (!userInteracted) {
-      pendingToken = token;
-      if (statusEl) statusEl.textContent = 'Please click the checkbox to continue.';
-      return;
-    }
-
-    proceedWithToken(token);
-  }
-
-  function proceedWithToken(token) {
-    const statusEl = document.getElementById('status');
     getChallengePayload()
       .then(function(data) {
         if (!data.success) throw new Error('Decryption failed');
@@ -2929,24 +2916,6 @@ function buildChallengeHtml(encryptedData) {
       src: ev && ev.target && ev.target.src || ''
     });
   }
-
-  function noteUserInteraction() {
-    if (userInteracted) return;
-    userInteracted = true;
-    if (pendingToken) {
-      const token = pendingToken;
-      pendingToken = null;
-      proceedWithToken(token);
-    }
-  }
-
-  document.addEventListener('DOMContentLoaded', function() {
-    const tsContainer = document.getElementById('ts');
-    if (tsContainer) {
-      tsContainer.addEventListener('pointerdown', noteUserInteraction);
-      tsContainer.addEventListener('keydown', noteUserInteraction);
-    }
-  }, { once: true });
 </script>
 
 <!-- SINGLE SCRIPT TAG - No duplicate loading -->
