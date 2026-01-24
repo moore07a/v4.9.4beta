@@ -838,15 +838,6 @@ function parseIpAddress(ip) {
     }
   }
   
-  // Handle IPv6 with port without brackets (uncommon but possible)
-  if (ip.includes(':') && ip.split(':').length > 2) {
-    const lastColon = ip.lastIndexOf(':');
-    const potentialPort = ip.slice(lastColon + 1);
-    if (/^\d+$/.test(potentialPort)) {
-      return ip.slice(0, lastColon);
-    }
-  }
-  
   // Plain IPv4, IPv6 without port, or unknown format
   return ip;
 }
@@ -946,7 +937,7 @@ function isKnownProxyIp(ip) {
     /^172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+$/, // Private
     /^127\.\d+\.\d+\.\d+$/, // Localhost
     /^::1$/, // IPv6 localhost
-    /^fc00::\/7$/, // IPv6 private
+    /^f[cd][0-9a-f]{2}:/i, // IPv6 private (fc00::/7)
   ];
   
   return proxyRanges.some(pattern => pattern.test(ip));
