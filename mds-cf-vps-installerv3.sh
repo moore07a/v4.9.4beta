@@ -40,6 +40,9 @@ HOSTNAMES_HASH_PATH="${CF_SSL_DIR}/hostnames.sha256"
 NGINX_SITE_CONF="/etc/nginx/conf.d/site.conf"
 NGINX_CF_REALIP="/etc/nginx/conf.d/cloudflare-realip.conf"
 
+declare -a CF_IPS_V4=()
+declare -a CF_IPS_V6=()
+
 # -------------------------
 # Helpers
 # -------------------------
@@ -65,7 +68,7 @@ json_array_from_list() {
 }
 
 load_cloudflare_ips() {
-  if [[ "${#CF_IPS_V4[@]:-}" -gt 0 || "${#CF_IPS_V6[@]:-}" -gt 0 ]]; then
+  if [[ ${#CF_IPS_V4[@]} -gt 0 || ${#CF_IPS_V6[@]} -gt 0 ]]; then
     return 0
   fi
 
