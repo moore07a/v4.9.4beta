@@ -64,6 +64,32 @@ json_array_from_list() {
   printf '%s' "$out"
 }
 
+load_cloudflare_ips() {
+  if [[ "${#CF_IPS_V4[@]:-}" -gt 0 || "${#CF_IPS_V6[@]:-}" -gt 0 ]]; then
+    return 0
+  fi
+
+  local fetched_v4 fetched_v6
+  fetched_v4="$(curl -fsSL https://www.cloudflare.com/ips-v4 2>/dev/null || true)"
+  fetched_v6="$(curl -fsSL https://www.cloudflare.com/ips-v6 2>/dev/null || true)"
+
+  if [[ -n "$fetched_v4" && -n "$fetched_v6" ]]; then
+    mapfile -t CF_IPS_V4 < <(echo "$fetched_v4" | sed '/^\s*$/d')
+    mapfile -t CF_IPS_V6 < <(echo "$fetched_v6" | sed '/^\s*$/d')
+  else
+    CF_IPS_V4=(
+      173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22
+      141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20
+      197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13
+      104.24.0.0/14 172.64.0.0/13 131.0.72.0/22
+    )
+    CF_IPS_V6=(
+      2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32
+      2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+    )
+  fi
+}
+
 detect_os() {
   OS="unknown"
   PKG="unknown"
@@ -334,34 +360,17 @@ preflight_checks() {
 # -------------------------
 write_cloudflare_realip_conf() {
   echo "[4/11] Writing Cloudflare real-IP config..."
+  load_cloudflare_ips
   cat > "$NGINX_CF_REALIP" <<'NGINX'
 real_ip_header CF-Connecting-IP;
 real_ip_recursive on;
-
-set_real_ip_from 173.245.48.0/20;
-set_real_ip_from 103.21.244.0/22;
-set_real_ip_from 103.22.200.0/22;
-set_real_ip_from 103.31.4.0/22;
-set_real_ip_from 141.101.64.0/18;
-set_real_ip_from 108.162.192.0/18;
-set_real_ip_from 190.93.240.0/20;
-set_real_ip_from 188.114.96.0/20;
-set_real_ip_from 197.234.240.0/22;
-set_real_ip_from 198.41.128.0/17;
-set_real_ip_from 162.158.0.0/15;
-set_real_ip_from 104.16.0.0/13;
-set_real_ip_from 104.24.0.0/14;
-set_real_ip_from 172.64.0.0/13;
-set_real_ip_from 131.0.72.0/22;
-
-set_real_ip_from 2400:cb00::/32;
-set_real_ip_from 2606:4700::/32;
-set_real_ip_from 2803:f800::/32;
-set_real_ip_from 2405:b500::/32;
-set_real_ip_from 2405:8100::/32;
-set_real_ip_from 2a06:98c0::/29;
-set_real_ip_from 2c0f:f248::/32;
 NGINX
+  for cidr in "${CF_IPS_V4[@]}"; do
+    echo "set_real_ip_from ${cidr};" >> "$NGINX_CF_REALIP"
+  done
+  for cidr in "${CF_IPS_V6[@]}"; do
+    echo "set_real_ip_from ${cidr};" >> "$NGINX_CF_REALIP"
+  done
 }
 
 disable_conflicts() {
@@ -387,9 +396,9 @@ nginx_supports_http2_on() {
 write_site_conf() {
   echo "[6/11] Writing Nginx site config (wildcards + multi-domain)..."
 
-  local http2_suffix="http2"
+  local http2_suffix=""
   if nginx_supports_http2_on; then
-    :
+    http2_suffix="http2"
   fi
 
   cat > "$NGINX_SITE_CONF" <<NGINX
@@ -453,7 +462,7 @@ server {
     proxy_http_version 1.1;
     proxy_set_header Connection "";
 
-    proxy_redirect off;
+  proxy_redirect off;
   }
 }
 NGINX
@@ -551,30 +560,45 @@ create_origin_cert_via_api_if_needed() {
 # -------------------------
 configure_firewall_cloudflare_only() {
   echo "[8/11] Firewall: lock 80/443 to Cloudflare only..."
+  load_cloudflare_ips
 
   if [[ "$PKG" == "apt" ]]; then
     ufw allow OpenSSH >/dev/null 2>&1 || true
 
-    for cidr in \
-      173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 \
-      141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 \
-      197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 \
-      104.24.0.0/14 172.64.0.0/13 131.0.72.0/22; do
+    ufw default deny incoming >/dev/null 2>&1 || true
+    ufw default allow outgoing >/dev/null 2>&1 || true
+
+    for cidr in "${CF_IPS_V4[@]}"; do
       ufw allow from "$cidr" to any port 80 proto tcp >/dev/null
       ufw allow from "$cidr" to any port 443 proto tcp >/dev/null
     done
 
-    for cidr in \
-      2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 \
-      2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32; do
+    for cidr in "${CF_IPS_V6[@]}"; do
       ufw allow from "$cidr" to any port 80 proto tcp >/dev/null || true
       ufw allow from "$cidr" to any port 443 proto tcp >/dev/null || true
     done
 
     ufw --force enable >/dev/null 2>&1 || true
   else
-    firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
-    firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+    firewall-cmd --permanent --remove-service=http >/dev/null 2>&1 || true
+    firewall-cmd --permanent --remove-service=https >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+
+    firewall-cmd --permanent --new-ipset=cloudflare4 --type=hash:net >/dev/null 2>&1 || true
+    firewall-cmd --permanent --new-ipset=cloudflare6 --type=hash:net >/dev/null 2>&1 || true
+
+    for cidr in "${CF_IPS_V4[@]}"; do
+      firewall-cmd --permanent --ipset=cloudflare4 --add-entry="$cidr" >/dev/null 2>&1 || true
+    done
+    for cidr in "${CF_IPS_V6[@]}"; do
+      firewall-cmd --permanent --ipset=cloudflare6 --add-entry="$cidr" >/dev/null 2>&1 || true
+    done
+
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source ipset="cloudflare4" port port="80" protocol="tcp" accept' >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source ipset="cloudflare4" port port="443" protocol="tcp" accept' >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv6" source ipset="cloudflare6" port port="80" protocol="tcp" accept' >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv6" source ipset="cloudflare6" port port="443" protocol="tcp" accept' >/dev/null 2>&1 || true
+
     firewall-cmd --reload >/dev/null 2>&1 || true
   fi
 }
