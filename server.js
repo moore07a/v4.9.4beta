@@ -50,6 +50,8 @@ const trustProxy = (() => {
 app.set('trust proxy', trustProxy);
 console.log(`[PROXY] Trust proxy setting: ${trustProxy}`);
 
+const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() === "true";
+
 // ------------ Global security headers (CSP + PAT) ---------------
 app.use((req, res, next) => {
   // avoid caching challenge pages/tokens
@@ -170,6 +172,14 @@ const sanitizeLogLine = sanitizeOneLine;
 // Keep all your existing functions as they are...
 function safeDecode(s) {
   try { return decodeURIComponent(s); } catch { return s; }
+}
+
+function hasCloudflareHeaders(req) {
+  return Boolean(
+    req.headers["cf-connecting-ip"] ||
+    req.headers["cf-ray"] ||
+    req.headers["cf-visitor"]
+  );
 }
 
 function decodeB64Any(s) {
@@ -1661,6 +1671,16 @@ function checkSecurityPolicies(req) {
   const ip = getClientIp(req);
   const ua = req.get("user-agent") || "";
   const bypassInterstitial = hasInterstitialBypass(req);
+
+  if (REQUIRE_CF_HEADERS && !hasCloudflareHeaders(req)) {
+    addLog(
+      `[CF] missing headers ip=${safeLogValue(ip)} ua="${safeLogValue(
+        ua.slice(0, UA_TRUNCATE_LENGTH)
+      )}"`
+    );
+    addSpacer();
+    return { blocked: true, status: 403, message: "Forbidden" };
+  }
 
   if (bypassInterstitial) {
     addLog(

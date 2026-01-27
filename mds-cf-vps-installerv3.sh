@@ -148,6 +148,7 @@ write_static_site() {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Secure Gateway</title>
+  <meta name="robots" content="noindex,nofollow" />
   <style>
     body{font-family:system-ui,-apple-system,sans-serif;background:#0c1116;color:#e8eef6;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh}
     .container{text-align:center;max-width:520px;padding:40px 20px}
@@ -173,6 +174,7 @@ HTML
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Not Found</title>
+  <meta name="robots" content="noindex,nofollow" />
   <style>
     body{font-family:system-ui,-apple-system,sans-serif;background:#0c1116;color:#e8eef6;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh}
     .container{text-align:center;max-width:520px;padding:40px 20px}
