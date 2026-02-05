@@ -1944,7 +1944,15 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
   const linkHash = options.linkHash || null;
   
   try {
-    const hostname = new URL(finalUrl).hostname;
+    const parsedUrl = new URL(finalUrl);
+    const hostname = parsedUrl.hostname;
+    const protocol = parsedUrl.protocol;
+
+    if (!["http:", "https:"].includes(protocol)) {
+      addLog(`[ALLOWLIST] blocked protocol=${safeLogValue(protocol)} host=${safeLogValue(hostname)} ip=${safeLogValue(ip)}`);
+      addSpacer();
+      return res.status(403).send("Unauthorized URL");
+    }
 
     if (pinnedHost && pinnedHost !== hostname) {
       logHostPinFailure({ ip, ua, linkHash, pinnedHost, actualHost: hostname });
@@ -1963,7 +1971,7 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
 
     addLog(`[REDIRECT] ip=${safeLogValue(ip)} -> ${safeLogValue(finalUrl, URL_DISPLAY_MAX_LENGTH)}`);
     addSpacer();
-    return res.redirect(finalUrl);
+    return res.redirect(302, finalUrl);
   } catch (e) {
     addLog(`[URL] invalid ip=${safeLogValue(ip)} value="${safeLogValue((finalUrl || ""), URL_DISPLAY_MAX_LENGTH)}" err="${safeLogValue(e.message)}"`);
     addSpacer();
