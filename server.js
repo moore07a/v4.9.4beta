@@ -3014,7 +3014,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
-    body: JSON.stringify({ ct: ${JSON.stringify(fragmentToken)} })
+    body: JSON.stringify({ ct: ${JSON.stringify(fragmentToken)}, nonce: ${JSON.stringify(res.locals.cspNonce || "")} })
   })
     .then(function(r){ if (!r.ok) throw new Error("Failed to load"); return r.text(); })
     .then(function(html){ document.open(); document.write(html); document.close(); })
@@ -3029,6 +3029,9 @@ app.get("/challenge", limitChallengeView, (req, res) => {
 function handleChallengeFragment(req, res) {
   const resolved = resolveChallengeRequest(req, res);
   if (!resolved) return;
+
+  const rawNonce = (req.body && req.body.nonce) || req.query.nonce || "";
+  const nonce = /^[A-Za-z0-9+/=_-]{8,}$/.test(String(rawNonce)) ? String(rawNonce) : res.locals.cspNonce;
 
   const { nextEnc, challengeReason } = resolved;
   const nextPath = safeDecode(nextEnc);
@@ -3049,7 +3052,7 @@ function handleChallengeFragment(req, res) {
   };
 
   const encryptedData = encryptChallengeData(challengePayload);
-  const htmlContent = buildChallengeHtml(encryptedData, res.locals.cspNonce);
+  const htmlContent = buildChallengeHtml(encryptedData, nonce);
 
   res.type("html").send(htmlContent);
 }
