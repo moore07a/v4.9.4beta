@@ -3009,8 +3009,8 @@ app.get("/challenge", limitChallengeView, (req, res) => {
 </head>
 <body>
 <noscript>Turnstile requires JavaScript. Please enable JS and refresh.</noscript>
-<script>
-  <script nonce="${res.locals.cspNonce || ''}">
+<script nonce="${res.locals.cspNonce || ''}">
+  fetch("/challenge-fragment", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
