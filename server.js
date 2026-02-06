@@ -1076,11 +1076,13 @@ const ALLOWLIST_SUFFIXES = (process.env.ALLOWLIST_SUFFIXES || ".test2.app")
   .split(",").map(s=>s.trim()).filter(Boolean);
 
 // ================== CONFIGURATION VALIDATION ==================
+const normalizeTurnstileEnv = (value) => String(value || "").trim();
+
 function validateConfig() {
   const errors = [];
   const warnings = [];
   const isTurnstileKey = (value) => {
-    const trimmed = String(value || "").trim();
+    const trimmed = normalizeTurnstileEnv(value);
     if (!trimmed) return false;
     return /^(?:0x)?[0-9a-zA-Z_-]{20,}$/.test(trimmed);
   };
@@ -1102,8 +1104,8 @@ function validateConfig() {
   }
 
   // Validate TURNSTILE credentials format
-  const turnstileSitekey = process.env.TURNSTILE_SITEKEY || "";
-  const turnstileSecret = process.env.TURNSTILE_SECRET || "";
+  const turnstileSitekey = normalizeTurnstileEnv(process.env.TURNSTILE_SITEKEY);
+  const turnstileSecret = normalizeTurnstileEnv(process.env.TURNSTILE_SECRET);
   if (!isTurnstileKey(turnstileSitekey)) {
     errors.push(`Invalid TURNSTILE_SITEKEY format (got: ${turnstileSitekey ? `${turnstileSitekey.slice(0, 8)}...` : "empty"})`);
   }
@@ -1656,8 +1658,8 @@ function headlessSuspicion(req){
 }
 
 // ================== TURNSTILE FUNCTIONS ==================
-const TURNSTILE_SITEKEY = process.env.TURNSTILE_SITEKEY || "";
-const TURNSTILE_SECRET  = process.env.TURNSTILE_SECRET  || "";
+const TURNSTILE_SITEKEY = normalizeTurnstileEnv(process.env.TURNSTILE_SITEKEY);
+const TURNSTILE_SECRET  = normalizeTurnstileEnv(process.env.TURNSTILE_SECRET);
 const TURNSTILE_ORIGIN  = "https://challenges.cloudflare.com";
 if (!TURNSTILE_SITEKEY || !TURNSTILE_SECRET) {
   console.error("❌ TURNSTILE_SITEKEY and TURNSTILE_SECRET must be set.");
