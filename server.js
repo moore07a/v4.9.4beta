@@ -273,15 +273,22 @@ function validateRedirectRequest(req, res, next) {
     const ua = req.get("user-agent") || "";
     addLog(`[VALIDATION-FAILED] ip=${safeLogValue(ip)} path=${req.path} errors=${errors.join(", ")} ua="${safeLogValue(ua.slice(0, 100))}"`);
 
-    if (req.path === "/r" && !req.query.d) {
-      return res.status(400).send("Missing required parameter: d");
-    }
-
     if (errors.some(e => e.includes("Suspicious"))) {
       addStrike(ip, 2);
     }
 
-    return res.status(400).send("Invalid request");
+    const sendValidationError = () => {
+      if (req.path === "/r" && !req.query.d) {
+        return res.status(400).send("Missing required parameter: d");
+      }
+      return res.status(400).send("Invalid request");
+    };
+
+    if (req.path === "/r" || req.path.startsWith("/r/")) {
+      return validationFailureLimiter(req, res, sendValidationError);
+    }
+
+    return sendValidationError();
   }
 
   next();
@@ -2446,7 +2453,6 @@ app.use((req, res, next) => {
 });
 
 app.use(validateRedirectRequest);
-app.use("/r", validationFailureLimiter);
 
 // Apply rate limiters BEFORE routes
 app.use("/challenge",          limitChallenge);
