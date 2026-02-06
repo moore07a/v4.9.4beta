@@ -1079,6 +1079,11 @@ const ALLOWLIST_SUFFIXES = (process.env.ALLOWLIST_SUFFIXES || ".test2.app")
 function validateConfig() {
   const errors = [];
   const warnings = [];
+  const isTurnstileKey = (value) => {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) return false;
+    return /^(?:0x)?[0-9a-zA-Z_-]{20,}$/.test(trimmed);
+  };
 
   // Validate AES keys (extra safety; loadKeysFromEnv already enforces this)
   if (!AES_KEYS || AES_KEYS.length === 0) {
@@ -1099,10 +1104,10 @@ function validateConfig() {
   // Validate TURNSTILE credentials format
   const turnstileSitekey = process.env.TURNSTILE_SITEKEY || "";
   const turnstileSecret = process.env.TURNSTILE_SECRET || "";
-  if (!turnstileSitekey || !/^0x[0-9a-fA-F]{40}$|^[1-9][0-9a-zA-Z_-]{20,}$/.test(turnstileSitekey)) {
+  if (!isTurnstileKey(turnstileSitekey)) {
     errors.push(`Invalid TURNSTILE_SITEKEY format (got: ${turnstileSitekey ? `${turnstileSitekey.slice(0, 8)}...` : "empty"})`);
   }
-  if (!turnstileSecret || !/^[0-9a-zA-Z_-]{40,}$/.test(turnstileSecret)) {
+  if (!isTurnstileKey(turnstileSecret)) {
     errors.push(`Invalid TURNSTILE_SECRET format (got: ${turnstileSecret ? `${turnstileSecret.slice(0, 8)}...` : "empty"})`);
   }
 
