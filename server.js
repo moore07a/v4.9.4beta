@@ -1075,6 +1075,77 @@ const ALLOWLIST_DOMAINS  = (process.env.ALLOWLIST_DOMAINS  || "test2.com,sub.tes
 const ALLOWLIST_SUFFIXES = (process.env.ALLOWLIST_SUFFIXES || ".test2.app")
   .split(",").map(s=>s.trim()).filter(Boolean);
 
+// ================== CONFIGURATION VALIDATION ==================
+function validateConfig() {
+  const errors = [];
+  const warnings = [];
+
+  // Validate AES keys (extra safety; loadKeysFromEnv already enforces this)
+  if (!AES_KEYS || AES_KEYS.length === 0) {
+    errors.push("No AES keys configured (set AES_KEYS, AES_KEY, or AES_KEY_HEX)");
+  } else {
+    AES_KEYS.forEach((key, idx) => {
+      if (key.length !== 32) {
+        errors.push(`AES key #${idx} must be 32 bytes, got ${key.length} bytes`);
+      }
+    });
+  }
+
+  // Validate allowlist configuration
+  if (ALLOWLIST_DOMAINS.length === 0 && ALLOWLIST_SUFFIXES.length === 0) {
+    warnings.push("No allowlist domains configured - all redirects will be blocked unless explicitly allowed");
+  }
+
+  // Validate TURNSTILE credentials format
+  const turnstileSitekey = process.env.TURNSTILE_SITEKEY || "";
+  const turnstileSecret = process.env.TURNSTILE_SECRET || "";
+  if (!turnstileSitekey || !/^0x[0-9a-fA-F]{40}$|^[1-9][0-9a-zA-Z_-]{20,}$/.test(turnstileSitekey)) {
+    errors.push(`Invalid TURNSTILE_SITEKEY format (got: ${turnstileSitekey ? `${turnstileSitekey.slice(0, 8)}...` : "empty"})`);
+  }
+  if (!turnstileSecret || !/^[0-9a-zA-Z_-]{40,}$/.test(turnstileSecret)) {
+    errors.push(`Invalid TURNSTILE_SECRET format (got: ${turnstileSecret ? `${turnstileSecret.slice(0, 8)}...` : "empty"})`);
+  }
+
+  // Validate timezone
+  const configuredTz = process.env.TIMEZONE || "UTC";
+  if (safeZone(configuredTz) !== configuredTz) {
+    warnings.push(`Invalid TIMEZONE: ${configuredTz}. Using UTC as fallback.`);
+  }
+
+  // Validate rate limit settings
+  if (RATE_CAPACITY < 1 || RATE_CAPACITY > 1000) {
+    errors.push(`RATE_CAPACITY must be between 1-1000, got ${RATE_CAPACITY}`);
+  }
+  if (RATE_WINDOW_SECONDS < 1 || RATE_WINDOW_SECONDS > 86400) {
+    errors.push(`RATE_WINDOW_SECONDS must be between 1-86400, got ${RATE_WINDOW_SECONDS}`);
+  }
+
+  // Validate admin token
+  if (!ADMIN_TOKEN || ADMIN_TOKEN.length < 16) {
+    warnings.push("ADMIN_TOKEN is weak or missing. Admin endpoints may be insecure.");
+  }
+
+  // Validate INTERSTITIAL_BYPASS_SECRET
+  const bypassSecret = process.env.INTERSTITIAL_BYPASS_SECRET || "";
+  if (bypassSecret && bypassSecret.length < 8) {
+    warnings.push("INTERSTITIAL_BYPASS_SECRET is too short (min 8 chars)");
+  }
+
+  return { errors, warnings };
+}
+
+// Run validation
+const configValidation = validateConfig();
+if (configValidation.errors.length > 0) {
+  console.error("❌ Configuration errors:");
+  configValidation.errors.forEach(err => console.error(`   ${err}`));
+  if (process.env.NODE_ENV === "production") process.exit(1);
+}
+if (configValidation.warnings.length > 0) {
+  console.warn("⚠️ Configuration warnings:");
+  configValidation.warnings.forEach(warn => console.warn(`   ${warn}`));
+}
+
 const EXPECT_HOSTNAME_LIST   = (EXPECT_HOSTNAME || "")
   .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 const EXPECT_HOSTNAME_EXACT  = new Set(EXPECT_HOSTNAME_LIST.filter(h => !h.startsWith(".")));
