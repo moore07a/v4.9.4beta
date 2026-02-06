@@ -3319,12 +3319,41 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
       src: ev && ev.target && ev.target.src || ''
     });
   }
+
+  function onEarlyResourceErrorCapture(ev) {
+    const target = ev && ev.target;
+    if (!target || target.tagName !== 'SCRIPT') return;
+
+    const src = target.getAttribute('src') || '';
+    const isTurnstileScript =
+      target.id === TURNSTILE_SCRIPT_ID ||
+      src.indexOf('/turnstile/v0/api.js') !== -1;
+
+    if (!isTurnstileScript) return;
+
+    window.removeEventListener('error', onEarlyResourceErrorCapture, true);
+    tsApiOnError(ev);
+  }
+
+  window.addEventListener('error', onEarlyResourceErrorCapture, true);
+
+  function bindTurnstileScriptErrorHandler() {
+    const scriptEl = document.getElementById(TURNSTILE_SCRIPT_ID);
+    if (!scriptEl) return;
+    scriptEl.addEventListener('error', tsApiOnError, { once: true });
+    window.removeEventListener('error', onEarlyResourceErrorCapture, true);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindTurnstileScriptErrorHandler, { once: true });
+  } else {
+    bindTurnstileScriptErrorHandler();
+  }
 </script>
 
 <!-- SINGLE SCRIPT TAG - No duplicate loading -->
 <script id="cf-turnstile-script" 
         src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js?render=explicit&onload=tsApiOnLoad"
-        onerror="tsApiOnError(event)"
         async 
         defer>
 </script>
