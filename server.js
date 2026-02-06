@@ -204,6 +204,89 @@ function safeDecode(s) {
   try { return decodeURIComponent(s); } catch { return s; }
 }
 
+// ================== REQUEST VALIDATION MIDDLEWARE ==================
+function validateBase64Url(input) {
+  if (!input || typeof input !== "string") return false;
+
+  const clean = input.split("?")[0];
+  const base64UrlRegex = /^[A-Za-z0-9_-]+(?:={0,2})?$/;
+
+  if (clean.length < 10) return false;
+  if (!base64UrlRegex.test(clean)) return false;
+  if (/[^\w\-=]/.test(clean)) return false;
+
+  return true;
+}
+
+function validateRedirectParams(req) {
+  const errors = [];
+
+  if (req.path === "/r" || req.path.startsWith("/r/")) {
+    const baseString = safeDecode(String(req.query.d || req.params.data || ""));
+
+    if (!baseString) {
+      errors.push("Missing required parameter: d");
+    } else if (!validateBase64Url(baseString)) {
+      errors.push("Invalid data format: must be valid base64url");
+
+      if (baseString.length > 1000) {
+        addLog(`[VALIDATION] Oversized payload ip=${safeLogValue(getClientIp(req))} len=${baseString.length}`);
+      }
+    }
+  }
+
+  const suspiciousParams = ["javascript:", "data:", "vbscript:", "alert("];
+  for (const [key, value] of Object.entries(req.query || {})) {
+    if (typeof value === "string") {
+      for (const suspicious of suspiciousParams) {
+        if (value.toLowerCase().includes(suspicious)) {
+          errors.push(`Suspicious value in parameter ${key}`);
+          break;
+        }
+      }
+    }
+  }
+
+  return errors;
+}
+
+function validateRedirectRequest(req, res, next) {
+  const skipPaths = [
+    "/health", "/view-log", "/stream-log", "/geo-debug",
+    "/admin/", "/__debug/", "/_debug/", "/challenge",
+    "/ts-client-log", "/interstitial-human", "/favicon.ico",
+    "/robots.txt", "/turnstile-sitekey", "/__hp.gif",
+    "/decrypt-challenge-data", "/challenge-fragment"
+  ];
+
+  if (skipPaths.some(path => req.path.startsWith(path))) {
+    return next();
+  }
+
+  if (hasInterstitialBypass(req)) {
+    return next();
+  }
+
+  const errors = validateRedirectParams(req);
+  if (errors.length > 0) {
+    const ip = getClientIp(req);
+    const ua = req.get("user-agent") || "";
+    addLog(`[VALIDATION-FAILED] ip=${safeLogValue(ip)} path=${req.path} errors=${errors.join(", ")} ua="${safeLogValue(ua.slice(0, 100))}"`);
+
+    if (req.path === "/r" && !req.query.d) {
+      return res.status(400).send("Missing required parameter: d");
+    }
+
+    if (errors.some(e => e.includes("Suspicious"))) {
+      addStrike(ip, 2);
+    }
+
+    return res.status(400).send("Invalid request");
+  }
+
+  next();
+}
+
 function hasCloudflareHeaders(req) {
   return Boolean(
     req.headers["cf-connecting-ip"] ||
@@ -1737,6 +1820,7 @@ const limitChallengeView = makeIpLimiter({
 const limitChallenge   = makeIpLimiter({ capacity: parseInt(process.env.CHALLENGE_CAPACITY || "12",10), windowSec: parseInt(process.env.CHALLENGE_WINDOW_SEC || "300",10), keyPrefix: "challenge" });
 const limitTsClientLog = makeIpLimiter({ capacity: parseInt(process.env.TSLOG_CAPACITY || "30",10),      windowSec: parseInt(process.env.TSLOG_WINDOW_SEC || "300",10),      keyPrefix: "tslog" });
 const limitSseUnauth   = makeIpLimiter({ capacity: parseInt(process.env.SSE_UNAUTH_CAPACITY || "10",10), windowSec: parseInt(process.env.SSE_UNAUTH_WINDOW_SEC || "60",10),  keyPrefix: "sse_unauth" });
+const validationFailureLimiter = makeIpLimiter({ capacity: 10, windowSec: 300, keyPrefix: "validation_fail" });
 
 // ================== CORE REDIRECT / INTERSTITIAL HELPERS ==================
 const INTERSTITIAL_REASON_TEXT = {
@@ -2360,6 +2444,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+app.use(validateRedirectRequest);
+app.use("/r", validationFailureLimiter);
 
 // Apply rate limiters BEFORE routes
 app.use("/challenge",          limitChallenge);
