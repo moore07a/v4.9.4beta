@@ -3319,12 +3319,23 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
       src: ev && ev.target && ev.target.src || ''
     });
   }
+
+  function bindTurnstileScriptErrorHandler() {
+    const scriptEl = document.getElementById(TURNSTILE_SCRIPT_ID);
+    if (!scriptEl) return;
+    scriptEl.addEventListener('error', tsApiOnError, { once: true });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindTurnstileScriptErrorHandler, { once: true });
+  } else {
+    bindTurnstileScriptErrorHandler();
+  }
 </script>
 
 <!-- SINGLE SCRIPT TAG - No duplicate loading -->
 <script id="cf-turnstile-script" 
         src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js?render=explicit&onload=tsApiOnLoad"
-        onerror="tsApiOnError(event)"
         async 
         defer>
 </script>
