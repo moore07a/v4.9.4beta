@@ -231,9 +231,18 @@ function validateBase64Url(input) {
   if (!delimUsed) return false;
   if (!base64UrlRegex.test(mainPart)) return false;
   if (!emailPart || emailPart.length < 4) return false;
-  if (!base64AnyRegex.test(emailPart)) return false;
 
-  return true;
+  // Accept legacy rhs formats that splitCipherAndEmail already recognizes:
+  // - base64/base64url encoded email
+  // - raw or URL-encoded email (e.g. alice%40example.com)
+  if (base64AnyRegex.test(emailPart)) return true;
+
+  const decodedEmail = safeDecode(String(emailPart)).trim();
+  if (decodedEmail && isLikelyEmail(decodedEmail)) return true;
+
+  if (isLikelyEmail(String(emailPart).trim())) return true;
+
+  return false;
 }
 
 function validateRedirectParams(req) {
