@@ -466,6 +466,13 @@ function splitCipherAndEmail(baseString, decodeFn, isEmailFn) {
 
 function normHost(h){ return (h||"").split(":")[0].replace(/\.$/,"").toLowerCase(); }
 
+function hostMatchesSuffix(hostname, suffix) {
+  const host = normHost(hostname);
+  const normalizedSuffix = normHost(String(suffix || "").replace(/^\./, ""));
+  if (!host || !normalizedSuffix) return false;
+  return host === normalizedSuffix || host.endsWith(`.${normalizedSuffix}`);
+}
+
 function parseMinHourToMs(v, fallbackMs) {
   const s = String(v ?? "").trim().toLowerCase();
   if (!s) return fallbackMs;
@@ -2598,8 +2605,9 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
   
   try {
     const parsedUrl = new URL(finalUrl);
-    const hostname = parsedUrl.hostname;
+    const hostname = normHost(parsedUrl.hostname);
     const protocol = parsedUrl.protocol;
+    const normalizedPinnedHost = options.pinnedHost ? normHost(options.pinnedHost) : null;
 
     if (!["http:", "https:"].includes(protocol)) {
       addLog(`[ALLOWLIST] blocked protocol=${safeLogValue(protocol)} host=${safeLogValue(hostname)} ip=${safeLogValue(ip)}`);
@@ -2607,14 +2615,14 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
       return res.status(403).send("Unauthorized URL");
     }
 
-    if (pinnedHost && pinnedHost !== hostname) {
-      logHostPinFailure({ ip, ua, linkHash, pinnedHost, actualHost: hostname });
+    if (normalizedPinnedHost && normalizedPinnedHost !== hostname) {
+      logHostPinFailure({ ip, ua, linkHash, pinnedHost: normalizedPinnedHost, actualHost: hostname });
       return renderInvalidLinkPage(res);
     }
 
     const okHost =
       ALLOWLIST_DOMAINS.includes(hostname) ||
-      ALLOWLIST_SUFFIXES.some(s => hostname.endsWith(s));
+      ALLOWLIST_SUFFIXES.some(s => hostMatchesSuffix(hostname, s));
 
     if (!okHost) {
       addLog(`[ALLOWLIST] blocked host=${hostname} ip=${ip}`);
