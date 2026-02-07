@@ -464,7 +464,46 @@ function splitCipherAndEmail(baseString, decodeFn, isEmailFn) {
   return { mainPart, emailPart, delimUsed };
 }
 
-function normHost(h){ return (h||"").split(":")[0].replace(/\.$/,"").toLowerCase(); }
+function normHost(h) {
+  const raw = String(h || "").trim().toLowerCase().replace(/\.$/, "");
+  if (!raw) return "";
+  if (raw.startsWith("[") && raw.endsWith("]")) return raw;
+  const colonCount = (raw.match(/:/g) || []).length;
+  if (colonCount === 1) return raw.split(":")[0];
+  return raw;
+}
+
+function normalizeSuffixPattern(value) {
+  let s = String(value || "").trim().toLowerCase();
+  if (!s) return null;
+
+  let includeApex = true;
+  let allowSubdomains = false;
+  if (s.startsWith("*.")) {
+    includeApex = false;
+    allowSubdomains = true;
+    s = s.slice(2);
+  } else if (s.startsWith(".")) {
+    includeApex = false;
+    allowSubdomains = true;
+    s = s.slice(1);
+  }
+
+  const suffix = normHost(s);
+  if (!suffix) return null;
+  return { suffix, includeApex, allowSubdomains };
+}
+
+function hostMatchesSuffix(hostname, pattern) {
+  const host = normHost(hostname);
+  if (!host || !pattern || !pattern.suffix) return false;
+  if (host === pattern.suffix) return pattern.includeApex;
+  return pattern.allowSubdomains && host.endsWith(`.${pattern.suffix}`);
+}
+
+function isHostAllowlisted(hostname) {
+  return ALLOWLIST_DOMAINS.some(pattern => hostMatchesSuffix(hostname, pattern));
+}
 
 function parseMinHourToMs(v, fallbackMs) {
   const s = String(v ?? "").trim().toLowerCase();
@@ -1397,10 +1436,8 @@ const HEADLESS_BLOCK    = (process.env.HEADLESS_BLOCK || "0") === "1";
 const HEADLESS_STRIKE_WEIGHT = parseInt(process.env.HEADLESS_STRIKE_WEIGHT || "3", 10);
 const HEADLESS_SOFT_STRIKE   = (process.env.HEADLESS_SOFT_STRIKE || "0") === "1";
 
-const ALLOWLIST_DOMAINS  = (process.env.ALLOWLIST_DOMAINS  || "test2.com,sub.test2.com")  // landing
-  .split(",").map(s=>s.trim()).filter(Boolean);
-const ALLOWLIST_SUFFIXES = (process.env.ALLOWLIST_SUFFIXES || ".test2.app")
-  .split(",").map(s=>s.trim()).filter(Boolean);
+const ALLOWLIST_DOMAINS = (process.env.ALLOWLIST_DOMAINS || "test2.com,sub.test2.com") // landing
+  .split(",").map(normalizeSuffixPattern).filter(Boolean);
 
 // ================== CONFIGURATION VALIDATION ==================
 const normalizeTurnstileEnv = (value) => String(value || "").trim();
@@ -1426,7 +1463,7 @@ function validateConfig() {
   }
 
   // Validate allowlist configuration
-  if (ALLOWLIST_DOMAINS.length === 0 && ALLOWLIST_SUFFIXES.length === 0) {
+  if (ALLOWLIST_DOMAINS.length === 0) {
     warnings.push("No allowlist domains configured - all redirects will be blocked unless explicitly allowed");
   }
 
@@ -2598,8 +2635,9 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
   
   try {
     const parsedUrl = new URL(finalUrl);
-    const hostname = parsedUrl.hostname;
+    const hostname = normHost(parsedUrl.hostname);
     const protocol = parsedUrl.protocol;
+    const normalizedPinnedHost = options.pinnedHost ? normHost(options.pinnedHost) : null;
 
     if (!["http:", "https:"].includes(protocol)) {
       addLog(`[ALLOWLIST] blocked protocol=${safeLogValue(protocol)} host=${safeLogValue(hostname)} ip=${safeLogValue(ip)}`);
@@ -2607,14 +2645,12 @@ function validateAndRedirect(finalUrl, req, res, options = {}) {
       return res.status(403).send("Unauthorized URL");
     }
 
-    if (pinnedHost && pinnedHost !== hostname) {
-      logHostPinFailure({ ip, ua, linkHash, pinnedHost, actualHost: hostname });
+    if (normalizedPinnedHost && normalizedPinnedHost !== hostname) {
+      logHostPinFailure({ ip, ua, linkHash, pinnedHost: normalizedPinnedHost, actualHost: hostname });
       return renderInvalidLinkPage(res);
     }
 
-    const okHost =
-      ALLOWLIST_DOMAINS.includes(hostname) ||
-      ALLOWLIST_SUFFIXES.some(s => hostname.endsWith(s));
+    const okHost = isHostAllowlisted(hostname);
 
     if (!okHost) {
       addLog(`[ALLOWLIST] blocked host=${hostname} ip=${ip}`);
@@ -3772,7 +3808,7 @@ function startupSummary() {
     `  • Headless: block=${HEADLESS_BLOCK} hardWeight=${HEADLESS_STRIKE_WEIGHT} softStrike=${HEADLESS_SOFT_STRIKE}`,
     `  • RateLimit: capacity=${RATE_CAPACITY}/window=${RATE_WINDOW_SECONDS}s`,
     `  • Bans: ttl=${BAN_TTL_SEC}s threshold=${BAN_AFTER_STRIKES} hpWeight=${STRIKE_WEIGHT_HP}`,
-    `  • Allowlist: exact=[${ALLOWLIST_DOMAINS.join(",")||"-"}] suffix=[${ALLOWLIST_SUFFIXES.join(",")||"-"}]`,
+    `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
     `  • Challenge security: rateLimit=5/5min tokens=10min`,
     `  • Geo fallback active=${Boolean(geoip)}`,
     `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`
