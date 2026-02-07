@@ -276,7 +276,7 @@ function validateRedirectParams(req) {
 
   // Catch-all route hardening: reject obvious scanner paths early so they do not
   // enter challenge flow/log spam loops.
-  if (req.path !== "/" && !req.path.startsWith("/r") && !req.path.startsWith("/e/")) {
+  if (req.path !== "/" && req.path !== "/r" && !req.path.startsWith("/e/")) {
     const candidate = safeDecode(String((req.originalUrl || "").slice(1).split("?")[0] || ""));
     if (!candidate || !validateBase64Url(candidate)) {
       errors.push("Invalid catch-all path: expected encoded redirect payload");
@@ -1276,6 +1276,14 @@ function shouldTrustClientIpHeaders(req) {
 
 function getDenyCacheIp(req) {
   const directIp = getDirectRemoteIp(req);
+
+  // When Express proxy trust is enabled, req.ip is already normalized through
+  // trusted proxy hops and is safer than raw socket address for per-client keying.
+  if (trustProxy !== false) {
+    const trustedReqIp = parseIpAddress(String(req.ip || "").trim());
+    if (trustedReqIp) return trustedReqIp;
+  }
+
   if (shouldTrustClientIpHeaders(req)) {
     return getClientIp(req) || directIp || "unknown";
   }
