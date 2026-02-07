@@ -478,27 +478,24 @@ function normalizeSuffixPattern(value) {
   if (!s) return null;
 
   let includeApex = true;
-  let allowSubdomains = false;
   if (s.startsWith("*.")) {
     includeApex = false;
-    allowSubdomains = true;
     s = s.slice(2);
   } else if (s.startsWith(".")) {
     includeApex = false;
-    allowSubdomains = true;
     s = s.slice(1);
   }
 
   const suffix = normHost(s);
   if (!suffix) return null;
-  return { suffix, includeApex, allowSubdomains };
+  return { suffix, includeApex };
 }
 
 function hostMatchesSuffix(hostname, pattern) {
   const host = normHost(hostname);
   if (!host || !pattern || !pattern.suffix) return false;
   if (host === pattern.suffix) return pattern.includeApex;
-  return pattern.allowSubdomains && host.endsWith(`.${pattern.suffix}`);
+  return host.endsWith(`.${pattern.suffix}`);
 }
 
 function isHostAllowlisted(hostname) {
@@ -3808,7 +3805,7 @@ function startupSummary() {
     `  • Headless: block=${HEADLESS_BLOCK} hardWeight=${HEADLESS_STRIKE_WEIGHT} softStrike=${HEADLESS_SOFT_STRIKE}`,
     `  • RateLimit: capacity=${RATE_CAPACITY}/window=${RATE_WINDOW_SECONDS}s`,
     `  • Bans: ttl=${BAN_TTL_SEC}s threshold=${BAN_AFTER_STRIKES} hpWeight=${STRIKE_WEIGHT_HP}`,
-    `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
+    `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.includeApex ? p.suffix : `*.${p.suffix}`).join(",")||"-"}]`,
     `  • Challenge security: rateLimit=5/5min tokens=10min`,
     `  • Geo fallback active=${Boolean(geoip)}`,
     `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`
