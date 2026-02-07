@@ -274,6 +274,15 @@ function validateRedirectParams(req) {
     }
   }
 
+  // Catch-all route hardening: reject obvious scanner paths early so they do not
+  // enter challenge flow/log spam loops.
+  if (req.path !== "/" && !req.path.startsWith("/r") && !req.path.startsWith("/e/")) {
+    const candidate = safeDecode(String((req.originalUrl || "").slice(1).split("?")[0] || ""));
+    if (!candidate || !validateBase64Url(candidate)) {
+      errors.push("Invalid catch-all path: expected encoded redirect payload");
+    }
+  }
+
   return errors;
 }
 
@@ -307,6 +316,9 @@ function validateRedirectRequest(req, res, next) {
     const sendValidationError = () => {
       if (req.path === "/r" && !req.query.d) {
         return res.status(400).send("Missing required parameter: d");
+      }
+      if (errors.some(e => e.includes("Invalid catch-all path"))) {
+        return res.status(404).send("Not Found");
       }
       return res.status(400).send("Invalid request");
     };
@@ -586,6 +598,45 @@ const LOG_IDS = [];
 let LOG_SEQ = 0;
 const LOG_LISTENERS = new Set();
 
+const AGG_WINDOW_MS = parseInt(process.env.LOG_AGG_WINDOW_MS || "60000", 10);
+const AGG_FLUSH_MS = parseInt(process.env.LOG_AGG_FLUSH_MS || "15000", 10);
+const logAggregation = new Map();
+
+function aggregatePerIpEvent(eventKey, details = {}) {
+  const ip = safeLogValue(details.ip || "unknown", 80);
+  const key = `${eventKey}:${ip}`;
+  const now = Date.now();
+  const st = logAggregation.get(key);
+
+  if (!st || now > st.windowStart + AGG_WINDOW_MS) {
+    logAggregation.set(key, {
+      count: 1,
+      windowStart: now,
+      lastDetails: details
+    });
+    return true;
+  }
+
+  st.count += 1;
+  st.lastDetails = details;
+  logAggregation.set(key, st);
+  return false;
+}
+
+function flushAggregatedLogs(now = Date.now()) {
+  for (const [key, st] of logAggregation.entries()) {
+    if (now < st.windowStart + AGG_WINDOW_MS) continue;
+    if (st.count > 1) {
+      const [eventKey] = key.split(":");
+      const ctry = st.lastDetails.country ? ` country=${safeLogValue(st.lastDetails.country, 8)}` : "";
+      const reason = st.lastDetails.reason ? ` reason=${safeLogValue(st.lastDetails.reason, 80)}` : "";
+      addLog(`[AGG:${eventKey}] blocked=${st.count} ip=${safeLogValue(st.lastDetails.ip || "unknown", 80)} window=${Math.round(AGG_WINDOW_MS / 1000)}s${ctry}${reason}`);
+      addSpacer();
+    }
+    logAggregation.delete(key);
+  }
+}
+
 function sseSend(res, text, id) {
   if (id != null) res.write(`id: ${id}\n`);
   String(text).split(/\r?\n/).forEach(line => {
@@ -673,6 +724,125 @@ const BAN_AFTER_STRIKES = parseInt(process.env.BAN_AFTER_STRIKES || "4", 10);
 const STRIKE_WEIGHT_HP  = parseInt(process.env.STRIKE_WEIGHT_HP || "3", 10);
 const inMemBans = new Map();
 const inMemStrikes = new Map();
+
+const DENY_CACHE_TTL_SEC = parseInt(process.env.DENY_CACHE_TTL_SEC || "300", 10);
+const inMemDenyCache = new Map();
+
+function addDenyCache(ip, reason, ttlSec = DENY_CACHE_TTL_SEC) {
+  const safeIp = sanitizeIpForKey(ip);
+  inMemDenyCache.set(safeIp, { until: Date.now() + (ttlSec * 1000), reason: safeLogValue(reason, 32) });
+}
+
+function getDenyCache(ip) {
+  const safeIp = sanitizeIpForKey(ip);
+  const st = inMemDenyCache.get(safeIp);
+  if (!st) return null;
+  if (Date.now() > st.until) {
+    inMemDenyCache.delete(safeIp);
+    return null;
+  }
+  return st;
+}
+
+const ALERT_WINDOW_MS = parseInt(process.env.ALERT_WINDOW_MS || "600000", 10);
+const ALERT_UNIQUE_OFFENDER_THRESHOLD = parseInt(process.env.ALERT_UNIQUE_OFFENDER_THRESHOLD || "25", 10);
+const ALERT_COUNTRY_SPIKE_THRESHOLD = parseInt(process.env.ALERT_COUNTRY_SPIKE_THRESHOLD || "20", 10);
+const ALERT_ASN_SPIKE_THRESHOLD = parseInt(process.env.ALERT_ASN_SPIKE_THRESHOLD || "20", 10);
+const alertState = {
+  offenders: new Map(),
+  countries: new Map(),
+  asns: new Map(),
+  challengeBypass: new Map(),
+  dedupe: new Map()
+};
+
+function incrementWindowCounter(map, key, now = Date.now()) {
+  const st = map.get(key);
+  if (!st || now - st.windowStart > ALERT_WINDOW_MS) {
+    map.set(key, { count: 1, windowStart: now });
+    return 1;
+  }
+  st.count += 1;
+  map.set(key, st);
+  return st.count;
+}
+
+function pruneAlertMap(map, now, windowMs = ALERT_WINDOW_MS) {
+  for (const [k, ts] of map.entries()) {
+    if (now - ts > windowMs) map.delete(k);
+  }
+}
+
+function pruneWindowCounterMap(map, now, windowMs = ALERT_WINDOW_MS) {
+  for (const [k, st] of map.entries()) {
+    if (!st || typeof st.windowStart !== "number" || now - st.windowStart > windowMs) {
+      map.delete(k);
+    }
+  }
+}
+
+function pruneAlertState(now = Date.now()) {
+  pruneAlertMap(alertState.offenders, now);
+  pruneAlertMap(alertState.challengeBypass, now);
+  pruneAlertMap(alertState.dedupe, now, ALERT_WINDOW_MS * 2);
+  pruneWindowCounterMap(alertState.countries, now);
+  pruneWindowCounterMap(alertState.asns, now);
+}
+
+function shouldEmitAlert(key, now = Date.now()) {
+  const last = alertState.dedupe.get(key);
+  if (last && (now - last) < ALERT_WINDOW_MS) return false;
+  alertState.dedupe.set(key, now);
+  return true;
+}
+
+function recordOffenderSignals(req, context = {}) {
+  const now = Date.now();
+  const ip = sanitizeIpForKey(getClientIp(req));
+  const country = context.country || getCountry(req) || "--";
+  const asn = context.asn || getASN(req) || "--";
+
+  alertState.offenders.set(ip, now);
+  const countryHits = incrementWindowCounter(alertState.countries, country, now);
+  const asnHits = incrementWindowCounter(alertState.asns, asn, now);
+
+  pruneAlertState(now);
+
+  if (alertState.offenders.size >= ALERT_UNIQUE_OFFENDER_THRESHOLD && shouldEmitAlert("unique-offenders", now)) {
+    addLog(`[ALERT] unique offender spike offenders=${alertState.offenders.size} window=${Math.round(ALERT_WINDOW_MS / 60000)}m`);
+    addSpacer();
+  }
+
+  if (country !== "--" && countryHits >= ALERT_COUNTRY_SPIKE_THRESHOLD && shouldEmitAlert(`country-${country}`, now)) {
+    addLog(`[ALERT] country spike country=${safeLogValue(country, 8)} hits=${countryHits} window=${Math.round(ALERT_WINDOW_MS / 60000)}m`);
+    addSpacer();
+  }
+
+  if (asn !== "--" && asnHits >= ALERT_ASN_SPIKE_THRESHOLD && shouldEmitAlert(`asn-${asn}`, now)) {
+    addLog(`[ALERT] asn spike asn=${safeLogValue(asn, 32)} hits=${asnHits} window=${Math.round(ALERT_WINDOW_MS / 60000)}m`);
+    addSpacer();
+  }
+}
+
+function recordChallengeBypassAttempt(req, reason) {
+  const now = Date.now();
+  const ip = sanitizeIpForKey(getClientIp(req));
+  alertState.challengeBypass.set(ip, now);
+  pruneAlertState(now);
+  if (shouldEmitAlert(`challenge-bypass-${ip}`, now)) {
+    addLog(`[ALERT] challenge bypass attempt ip=${safeLogValue(getClientIp(req), 80)} reason=${safeLogValue(reason, 60)} path=${safeLogValue(req.path, 120)}`);
+    addSpacer();
+  }
+}
+
+function createChallengeRedirect(baseString, req, reason, extras = {}) {
+  const ip = getClientIp(req);
+  const token = createChallengeToken(baseString, req, reason || "auth_required");
+  const hostParam = extras.host ? `&host=${encodeURIComponent(extras.host)}` : "";
+  const reasonParam = reason ? `&cr=${encodeURIComponent(sanitizeChallengeReason(reason))}` : "";
+  addLog(`[CHALLENGE] tokenized redirect ip=${safeLogValue(ip)} reason=${safeLogValue(reason || "auth_required", 40)} len=${baseString.length}`);
+  return `/challenge?ct=${encodeURIComponent(token)}${reasonParam}${hostParam}`;
+}
 
 function isBanned(ip) {
   const safeIp = sanitizeIpForKey(ip);
@@ -1078,6 +1248,38 @@ function getClientIp(req) {
   
   // Final fallback to Express
   return parseIpAddress(req.ip || "");
+}
+
+function getDirectRemoteIp(req) {
+  const remote =
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress ||
+    req.ip ||
+    "";
+  return parseIpAddress(String(remote || "").trim());
+}
+
+function shouldTrustClientIpHeaders(req) {
+  if (process.env.TRUST_CLIENT_IP_HEADERS === "1") return true;
+
+  // If proxy trust is explicitly disabled, do not trust forwarded client-ip headers.
+  if (trustProxy === false) return false;
+
+  // Cloudflare deployments can trust cf-connecting-ip only when cf context is present.
+  if (req.headers["cf-connecting-ip"] && hasCloudflareHeaders(req)) return true;
+
+  // Common managed platforms where upstream populates/normalizes forwarding headers.
+  if (process.env.VERCEL || process.env.NETLIFY || process.env.RENDER || process.env.RAILWAY || process.env.HEROKU) return true;
+
+  return false;
+}
+
+function getDenyCacheIp(req) {
+  const directIp = getDirectRemoteIp(req);
+  if (shouldTrustClientIpHeaders(req)) {
+    return getClientIp(req) || directIp || "unknown";
+  }
+  return directIp || "unknown";
 }
 
 // Helper function to identify known proxy IPs
@@ -2077,8 +2279,20 @@ app.use((req, res, next) => {
 
 function checkSecurityPolicies(req) {
   const ip = getClientIp(req);
+  const denyCacheIp = getDenyCacheIp(req);
   const ua = req.get("user-agent") || "";
   const bypassInterstitial = hasInterstitialBypass(req);
+
+  const denyHit = getDenyCache(denyCacheIp);
+  if (denyHit) {
+    const shouldLog = aggregatePerIpEvent("DENY_CACHE", { ip, reason: denyHit.reason });
+    if (shouldLog) {
+      addLog(`[DENY-CACHE] blocked ip=${safeLogValue(ip)} keyIp=${safeLogValue(denyCacheIp)} reason=${safeLogValue(denyHit.reason, 32)}`);
+      addSpacer();
+    }
+    recordOffenderSignals(req);
+    return { blocked: true, status: 403, message: "Forbidden" };
+  }
 
   if (REQUIRE_CF_HEADERS && !hasCloudflareHeaders(req)) {
     addLog(
@@ -2087,6 +2301,7 @@ function checkSecurityPolicies(req) {
       )}"`
     );
     addSpacer();
+    recordOffenderSignals(req);
     return { blocked: true, status: 403, message: "Forbidden" };
   }
 
@@ -2103,6 +2318,7 @@ function checkSecurityPolicies(req) {
   if (isBanned(ip)) {
     addLog(`[BAN] blocked ip=${ip}`);
     addSpacer();
+    recordOffenderSignals(req);
     return { blocked: true, status: 403, message: "Forbidden" };
   }
 
@@ -2118,6 +2334,7 @@ function checkSecurityPolicies(req) {
         ua.slice(0, UA_TRUNCATE_LENGTH)
       )}"`
     );
+    recordOffenderSignals(req);
     return { blocked: true, interstitial: true, scanner: topDetection.name };
   }
 
@@ -2126,6 +2343,8 @@ function checkSecurityPolicies(req) {
   if (!bypassInterstitial && BAD_UA.test(ua)) {
     addLog(`[UA-BLOCK] ip=${ip} ua="${ua.slice(0, UA_TRUNCATE_LENGTH)}"`);
     addSpacer();
+    addDenyCache(denyCacheIp, "ua_block");
+    recordOffenderSignals(req);
     return { blocked: true, status: 403, message: "Forbidden" };
   }
 
@@ -2152,6 +2371,8 @@ function checkSecurityPolicies(req) {
 
     if (HEADLESS_BLOCK && hs.hardCount > 0) {
       addSpacer();
+      addDenyCache(denyCacheIp, "headless_hard");
+      recordOffenderSignals(req);
       return { blocked: true, status: 403, message: "Forbidden" };
     }
   }
@@ -2160,13 +2381,23 @@ function checkSecurityPolicies(req) {
   const ctry = getCountry(req);
   const asn = getASN(req);
   if (countryBlocked(ctry)) {
-    addLog(`[GEO] blocked country=${safeLogValue(ctry)} ip=${safeLogValue(ip)}`);
-    addSpacer();
+    const shouldLog = aggregatePerIpEvent("GEO", { ip, country: ctry, reason: "country_block" });
+    if (shouldLog) {
+      addLog(`[GEO] blocked country=${safeLogValue(ctry)} ip=${safeLogValue(ip)}`);
+      addSpacer();
+    }
+    addDenyCache(denyCacheIp, "geo_block");
+    recordOffenderSignals(req, { country: ctry, asn });
     return { blocked: true, status: 403, message: "Forbidden" };
   }
   if (asnBlocked(asn)) {
-    addLog(`[ASN] blocked asn=${safeLogValue(asn)} ip=${safeLogValue(ip)}`);
-    addSpacer();
+    const shouldLog = aggregatePerIpEvent("ASN", { ip, reason: "asn_block" });
+    if (shouldLog) {
+      addLog(`[ASN] blocked asn=${safeLogValue(asn)} ip=${safeLogValue(ip)}`);
+      addSpacer();
+    }
+    addDenyCache(denyCacheIp, "asn_block");
+    recordOffenderSignals(req, { country: ctry, asn });
     return { blocked: true, status: 403, message: "Forbidden" };
   }
 
@@ -2182,12 +2413,17 @@ async function verifyTurnstileAndRateLimit(req, baseString) {
 
   const v = await verifyTurnstileToken(token, ip, { action:"link_redirect", linkHash, maxAgeSec:MAX_TOKEN_AGE_SEC });
   if (!v.ok) {
-    const next = encodeURIComponent(baseString);
-    const hostParam = (v.reason === "bad_hostname" && v.data && v.data.hostname)
-      ? `&host=${encodeURIComponent(v.data.hostname)}`
-      : "";
     addLog(`[AUTH] token invalid (${v.reason}) ip=${safeLogValue(ip)} ua="${safeLogValue(ua.slice(0, UA_TRUNCATE_LENGTH))}" -> /challenge`);
-    return { redirect: `/challenge?next=${next}${hostParam}` };
+    // Missing token is normal for first-time human visits; reserve bypass alerts
+    // for malformed/invalid supplied tokens and tamper-like states.
+    if (token || (v.reason && v.reason !== "missing")) {
+      recordChallengeBypassAttempt(req, `auth_${v.reason || 'invalid'}`);
+    }
+    return {
+      redirect: createChallengeRedirect(baseString, req, "auth_invalid", {
+        host: (v.reason === "bad_hostname" && v.data && v.data.hostname) ? v.data.hostname : ""
+      })
+    };
   }
 
   const { limited, retryAfterMs } = await isRateLimited(ip);
@@ -2435,10 +2671,8 @@ async function handleRedirectCore(req, res, baseString){
     addSpacer();
 
     if (!hasTurnstileToken) {
-      const nextEnc = encodeURIComponent(baseString);
       const reasonParam = sanitizeChallengeReason(reason);
-      const reasonSuffix = reasonParam ? `&cr=${encodeURIComponent(reasonParam)}` : "";
-      return res.redirect(302, `/challenge?next=${nextEnc}${reasonSuffix}`);
+      return res.redirect(302, createChallengeRedirect(baseString, req, reasonParam));
     }
   }
 
@@ -2911,6 +3145,7 @@ function resolveChallengeRequest(req, res) {
     const payload = verifyChallengeToken(String(rawCt), req);
     if (!payload) {
       addLog(`[CHALLENGE] Invalid or expired challenge token`);
+      recordChallengeBypassAttempt(req, "invalid_challenge_token");
       res.status(400).send("Invalid or expired challenge link");
       return null;
     }
@@ -2921,10 +3156,14 @@ function resolveChallengeRequest(req, res) {
     addLog(`[CHALLENGE] Valid token nextLen=${nextEnc.length} age=${Date.now() - payload.ts}ms`);
   } else if (req.query.next) {
     nextEnc = String(req.query.next);
-    addLog(`[CHALLENGE] LEGACY next parameter used len=${nextEnc.length} - consider updating links`);
+    addLog(`[CHALLENGE] LEGACY next parameter used len=${nextEnc.length} - auto-migrating`);
+    const migrated = createChallengeRedirect(nextEnc, req, challengeReason || "legacy_next_migrated");
+    return { redirect: migrated };
   } else if (body.next) {
     nextEnc = String(body.next);
-    addLog(`[CHALLENGE] Legacy body next parameter used len=${nextEnc.length} - consider updating links`);
+    addLog(`[CHALLENGE] Legacy body next parameter used len=${nextEnc.length} - auto-migrating`);
+    const migrated = createChallengeRedirect(nextEnc, req, challengeReason || "legacy_body_next_migrated");
+    return { redirect: migrated };
   } else {
     res.status(400).send("Missing challenge data");
     return null;
@@ -3402,6 +3641,7 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
 app.get("/challenge", limitChallengeView, (req, res) => {
   const resolved = resolveChallengeRequest(req, res);
   if (!resolved) return;
+  if (resolved.redirect) return res.redirect(302, resolved.redirect);
 
   const fragmentToken = resolved.ct || createChallengeToken(resolved.nextEnc, req, resolved.challengeReason);
 
@@ -3439,6 +3679,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
 function handleChallengeFragment(req, res) {
   const resolved = resolveChallengeRequest(req, res);
   if (!resolved) return;
+  if (resolved.redirect) return res.redirect(302, resolved.redirect);
 
   const rawNonce = (req.body && req.body.nonce) || req.query.nonce || "";
   const nonce = /^[A-Za-z0-9+/=_-]{8,}$/.test(String(rawNonce)) ? String(rawNonce) : res.locals.cspNonce;
@@ -3586,7 +3827,15 @@ app.listen(PORT, async () => {
         inMemBuckets.delete(key);
       }
     }
+
+    for (const [key, st] of inMemDenyCache.entries()) {
+      if (!st || now > st.until) inMemDenyCache.delete(key);
+    }
+
+    flushAggregatedLogs(now);
   }, 300000);
+
+  setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS);
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
