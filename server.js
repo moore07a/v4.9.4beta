@@ -1223,6 +1223,38 @@ function getClientIp(req) {
   return parseIpAddress(req.ip || "");
 }
 
+function getDirectRemoteIp(req) {
+  const remote =
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress ||
+    req.ip ||
+    "";
+  return parseIpAddress(String(remote || "").trim());
+}
+
+function shouldTrustClientIpHeaders(req) {
+  if (process.env.TRUST_CLIENT_IP_HEADERS === "1") return true;
+
+  // If proxy trust is explicitly disabled, do not trust forwarded client-ip headers.
+  if (trustProxy === false) return false;
+
+  // Cloudflare deployments can trust cf-connecting-ip only when cf context is present.
+  if (req.headers["cf-connecting-ip"] && hasCloudflareHeaders(req)) return true;
+
+  // Common managed platforms where upstream populates/normalizes forwarding headers.
+  if (process.env.VERCEL || process.env.NETLIFY || process.env.RENDER || process.env.RAILWAY || process.env.HEROKU) return true;
+
+  return false;
+}
+
+function getDenyCacheIp(req) {
+  const directIp = getDirectRemoteIp(req);
+  if (shouldTrustClientIpHeaders(req)) {
+    return getClientIp(req) || directIp || "unknown";
+  }
+  return directIp || "unknown";
+}
+
 // Helper function to identify known proxy IPs
 function isKnownProxyIp(ip) {
   const proxyRanges = [
@@ -2220,14 +2252,15 @@ app.use((req, res, next) => {
 
 function checkSecurityPolicies(req) {
   const ip = getClientIp(req);
+  const denyCacheIp = getDenyCacheIp(req);
   const ua = req.get("user-agent") || "";
   const bypassInterstitial = hasInterstitialBypass(req);
 
-  const denyHit = getDenyCache(ip);
+  const denyHit = getDenyCache(denyCacheIp);
   if (denyHit) {
     const shouldLog = aggregatePerIpEvent("DENY_CACHE", { ip, reason: denyHit.reason });
     if (shouldLog) {
-      addLog(`[DENY-CACHE] blocked ip=${safeLogValue(ip)} reason=${safeLogValue(denyHit.reason, 32)}`);
+      addLog(`[DENY-CACHE] blocked ip=${safeLogValue(ip)} keyIp=${safeLogValue(denyCacheIp)} reason=${safeLogValue(denyHit.reason, 32)}`);
       addSpacer();
     }
     recordOffenderSignals(req);
@@ -2283,7 +2316,7 @@ function checkSecurityPolicies(req) {
   if (!bypassInterstitial && BAD_UA.test(ua)) {
     addLog(`[UA-BLOCK] ip=${ip} ua="${ua.slice(0, UA_TRUNCATE_LENGTH)}"`);
     addSpacer();
-    addDenyCache(ip, "ua_block");
+    addDenyCache(denyCacheIp, "ua_block");
     recordOffenderSignals(req);
     return { blocked: true, status: 403, message: "Forbidden" };
   }
@@ -2311,7 +2344,7 @@ function checkSecurityPolicies(req) {
 
     if (HEADLESS_BLOCK && hs.hardCount > 0) {
       addSpacer();
-      addDenyCache(ip, "headless_hard");
+      addDenyCache(denyCacheIp, "headless_hard");
       recordOffenderSignals(req);
       return { blocked: true, status: 403, message: "Forbidden" };
     }
@@ -2326,7 +2359,7 @@ function checkSecurityPolicies(req) {
       addLog(`[GEO] blocked country=${safeLogValue(ctry)} ip=${safeLogValue(ip)}`);
       addSpacer();
     }
-    addDenyCache(ip, "geo_block");
+    addDenyCache(denyCacheIp, "geo_block");
     recordOffenderSignals(req, { country: ctry, asn });
     return { blocked: true, status: 403, message: "Forbidden" };
   }
@@ -2336,7 +2369,7 @@ function checkSecurityPolicies(req) {
       addLog(`[ASN] blocked asn=${safeLogValue(asn)} ip=${safeLogValue(ip)}`);
       addSpacer();
     }
-    addDenyCache(ip, "asn_block");
+    addDenyCache(denyCacheIp, "asn_block");
     recordOffenderSignals(req, { country: ctry, asn });
     return { blocked: true, status: 403, message: "Forbidden" };
   }
