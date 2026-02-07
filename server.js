@@ -761,6 +761,22 @@ function pruneAlertMap(map, now, windowMs = ALERT_WINDOW_MS) {
   }
 }
 
+function pruneWindowCounterMap(map, now, windowMs = ALERT_WINDOW_MS) {
+  for (const [k, st] of map.entries()) {
+    if (!st || typeof st.windowStart !== "number" || now - st.windowStart > windowMs) {
+      map.delete(k);
+    }
+  }
+}
+
+function pruneAlertState(now = Date.now()) {
+  pruneAlertMap(alertState.offenders, now);
+  pruneAlertMap(alertState.challengeBypass, now);
+  pruneAlertMap(alertState.dedupe, now, ALERT_WINDOW_MS * 2);
+  pruneWindowCounterMap(alertState.countries, now);
+  pruneWindowCounterMap(alertState.asns, now);
+}
+
 function shouldEmitAlert(key, now = Date.now()) {
   const last = alertState.dedupe.get(key);
   if (last && (now - last) < ALERT_WINDOW_MS) return false;
@@ -778,8 +794,7 @@ function recordOffenderSignals(req, context = {}) {
   const countryHits = incrementWindowCounter(alertState.countries, country, now);
   const asnHits = incrementWindowCounter(alertState.asns, asn, now);
 
-  pruneAlertMap(alertState.offenders, now);
-  pruneAlertMap(alertState.challengeBypass, now);
+  pruneAlertState(now);
 
   if (alertState.offenders.size >= ALERT_UNIQUE_OFFENDER_THRESHOLD && shouldEmitAlert("unique-offenders", now)) {
     addLog(`[ALERT] unique offender spike offenders=${alertState.offenders.size} window=${Math.round(ALERT_WINDOW_MS / 60000)}m`);
@@ -801,7 +816,7 @@ function recordChallengeBypassAttempt(req, reason) {
   const now = Date.now();
   const ip = sanitizeIpForKey(getClientIp(req));
   alertState.challengeBypass.set(ip, now);
-  pruneAlertMap(alertState.challengeBypass, now);
+  pruneAlertState(now);
   if (shouldEmitAlert(`challenge-bypass-${ip}`, now)) {
     addLog(`[ALERT] challenge bypass attempt ip=${safeLogValue(getClientIp(req), 80)} reason=${safeLogValue(reason, 60)} path=${safeLogValue(req.path, 120)}`);
     addSpacer();
