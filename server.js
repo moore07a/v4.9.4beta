@@ -307,7 +307,21 @@ function validateRedirectRequest(req, res, next) {
   if (errors.length > 0) {
     const ip = getClientIp(req);
     const ua = req.get("user-agent") || "";
-    addLog(`[VALIDATION-FAILED] ip=${safeLogValue(ip)} path=${req.path} errors=${errors.join(", ")} ua="${safeLogValue(ua.slice(0, 100))}"`);
+    const onlyCatchAllValidationError =
+      errors.length === 1 && errors[0] === "Invalid catch-all path: expected encoded redirect payload";
+
+    if (onlyCatchAllValidationError) {
+      const shouldLog = aggregatePerIpEvent("VALIDATION-FAILED", {
+        ip,
+        reason: "invalid_catch_all_path"
+      });
+
+      if (shouldLog) {
+        addLog(`[VALIDATION-FAILED] ip=${safeLogValue(ip)} path=${req.path} errors=${errors.join(", ")} ua="${safeLogValue(ua.slice(0, 100))}"`);
+      }
+    } else {
+      addLog(`[VALIDATION-FAILED] ip=${safeLogValue(ip)} path=${req.path} errors=${errors.join(", ")} ua="${safeLogValue(ua.slice(0, 100))}"`);
+    }
 
     if (errors.some(e => e.includes("Suspicious"))) {
       addStrike(ip, 2);
