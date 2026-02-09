@@ -311,6 +311,9 @@ function validateRedirectRequest(req, res, next) {
       errors.length === 1 && errors[0] === "Invalid catch-all path: expected encoded redirect payload";
 
     if (onlyCatchAllValidationError) {
+      // Expected behavior for noisy scanner paths: log the first hit immediately
+      // for visibility, then aggregate subsequent hits per-IP into periodic
+      // [AGG:VALIDATION-FAILED] summary lines.
       const shouldLog = aggregatePerIpEvent("VALIDATION-FAILED", {
         ip,
         reason: "invalid_catch_all_path"
