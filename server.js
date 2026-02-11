@@ -2989,393 +2989,6 @@ app.use(cors());
 app.use(express.json({ limit: "64kb" }));
 app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
-app.use((err, req, res, next) => {
-  if (err instanceof SyntaxError && err.type === "entity.parse.failed") {
-    try { addLog(`[TS-CLIENT] JSON parse error: ${String(err.message||'').slice(0,120)}`); addSpacer(); } catch {}
-    req.body = null;
-    return next();
-  }
-  return next(err);
-});
-
-app.use((req, res, next) => {
-  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Permissions-Policy", "interest-cohort=(), browsing-topics=()");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  if (process.env.ENABLE_HSTS === "1") {
-    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
-  }
-  next();
-});
-
-app.use(validateRedirectRequest);
-
-// Apply rate limiters BEFORE routes
-app.use("/challenge",          limitChallenge);
-app.use("/ts-client-log",      limitTsClientLog);
-app.use("/interstitial-human", limitTsClientLog);
-app.use("/stream-log", (req, res, next) => {
-  if (isAdminSSE(req)) return next();
-  return limitSseUnauth(req, res, next);
-});
-
-// ✅ Put the debug route here (before your normal routes)
-if (process.env.IP_DEBUG === '1') {
-  app.get('/_debug/ip', (req, res) => {
-    const clientIp = getClientIp(req); // Use the same function!
-    res.json({
-      trustProxy: req.app.get('trust proxy'),
-      clientIp: clientIp,
-      reqIp: req.ip,
-      reqIps: req.ips,
-      xff: req.headers['x-forwarded-for'] || null,
-      xVercelForwarded: req.headers['x-vercel-forwarded-for'] || null,
-      xReal: req.headers['x-real-ip'] || null,
-      nf: req.headers['x-nf-client-connection-ip'] || null,
-      allHeaders: {
-        'x-forwarded-for': req.headers['x-forwarded-for'],
-        'x-vercel-forwarded-for': req.headers['x-vercel-forwarded-for'],
-        'x-real-ip': req.headers['x-real-ip'],
-        'x-vercel-ip': req.headers['x-vercel-ip']
-      }
-    });
-  });
-}
-
-// ================== ROUTES ==================
-app.post("/decrypt-challenge-data",
-  express.json({ limit: "1kb" }),
-  (req, res) => {
-    const { data } = req.body || {};
-    if (!data) return res.json({ success: false, error: "No data" });
-
-    const payload = decryptChallengeData(data);
-    if (!payload) return res.json({ success: false, error: "Decryption failed" });
-
-    const raw = parseInt(process.env.CHALLENGE_PAYLOAD_TTL_MIN || "5", 10);
-    const ttlMin = Number.isFinite(raw) && raw > 0 ? raw : 5; // guard
-
-    // extra sanity: ensure payload.ts is a number
-    const issuedAt = typeof payload.ts === "number" ? payload.ts : 0;
-    if (Date.now() - issuedAt > ttlMin * 60 * 1000) {
-      return res.json({ success: false, error: "Payload expired" });
-    }
-
-    return res.json({ success: true, payload });
-  }
-);
-
-app.get("/health", (_req, res) => res.json({ ok:true, time:new Date().toISOString() }));
-
-app.post(
-"/ts-client-log",
-  express.text({ type: "*/*", limit: "64kb" }),
-  (req, res) => {
-    const ip  = getClientIp(req) || "unknown";
-    const ua  = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
-    const ct  = req.get("content-type") || "-";
-    const len = req.get("content-length") || "0";
-
-    let payload = null;
-
-    if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
-      payload = req.body;
-    } else {
-      const raw = typeof req.body === "string" ? req.body : "";
-
-      if (raw && raw.trim()) {
-        try { payload = JSON.parse(raw); } catch { }
-      }
-
-      if ((!payload || typeof payload !== "object") && raw && raw.includes("=")) {
-        try {
-          const params = new URLSearchParams(raw);
-          const obj = {};
-          for (const [k, v] of params.entries()) obj[k] = v;
-          payload = obj;
-        } catch { }
-      }
-
-      if (!payload) req.__rawPreview = raw.slice(0, 200);
-    }
-
-    if (!payload || typeof payload !== "object" || !payload.phase) {
-      const preview = req.__rawPreview != null
-        ? JSON.stringify(req.__rawPreview)
-        : (typeof req.body === "object" ? JSON.stringify(req.body).slice(0, 200) : '""');
-      addLog(`[TS-CLIENT:empty] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" ct=${safeLogValue(ct)} len=${safeLogValue(len)} preview=${safeLogValue(preview)}`);
-      return res.status(204).end();
-    }
-
-    addLog(`[TS-CLIENT:${safeLogValue(payload.phase)}] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" ${safeLogJson(payload)}`);
-    addSpacer();
-    res.status(204).end();
-  }
-);
-
-app.post(
-"/interstitial-human",
-  express.json({ type: "application/json", limit: "4kb" }),
-  (req, res) => {
-    const body = req.body || {};
-    const nextEnc = typeof body.next === "string" ? body.next.slice(0, 4096) : "";
-    if (!nextEnc) {
-      return res.status(400).json({ ok: false, error: "missing_next" });
-    }
-
-    markInterstitialHuman(nextEnc);
-
-    const ip = getClientIp(req) || "unknown";
-    const ua = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
-    addLog(
-      `[INTERSTITIAL-HUMAN] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" nextLen=${nextEnc.length}`
-    );
-    addSpacer();
-
-    res.json({ ok: true });
-  }
-);
-
-app.get("/stream-log", (req, res) => {
-  if (!isAdminSSE(req)) return res.status(403).end("Forbidden: missing admin token (SSE)");
-
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders?.();
-
-  try { res.write(": connected\n\n"); } catch {}
-
-  const lastIdHdr = req.get("last-event-id");
-  const lastId = lastIdHdr ? parseInt(lastIdHdr, 10) : NaN;
-  let startIdx = Math.max(0, LOG_IDS.length - BACKLOG_ON_CONNECT);
-  if (Number.isFinite(lastId) && lastId >= 0) {
-    const pos = LOG_IDS.lastIndexOf(lastId);
-    if (pos >= 0) startIdx = pos + 1;
-  } else {
-    res.write(`event: reset\ndata: {"ts":${Date.now()}}\n\n`);
-  }
-
-  for (let i = startIdx; i < LOGS.length; i++) {
-    sseSend(res, LOGS[i], LOG_IDS[i]);
-  }
-
-  LOG_LISTENERS.add(res);
-
-  try { res.write(": hb-ready\n\n"); } catch {}
-
-  const hb = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 25000);
-
-  let cleaned = false;
-  function cleanup() {
-    if (cleaned) return;
-    cleaned = true;
-    try { clearInterval(hb); } catch {}
-    LOG_LISTENERS.delete(res);
-  }
-
-  req.once("aborted", cleanup);
-  req.once("close", cleanup);
-  res.once("close", cleanup);
-  res.once("error", cleanup);
-  res.once("finish", cleanup);
-
-  req.socket?.setTimeout?.(0);
-  req.socket?.setKeepAlive?.(true);
-});
-
-app.get("/view-log-live", (req, res) => {
-  if (!(isAdmin(req) || isAdminSSE(req))) {
-    return res.status(401).type("text/plain").send("Unauthorized");
-  }
-
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader(
-    "Content-Security-Policy",
-    "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
-  );
-
-  const pageTok = req.query.token && String(req.query.token);
-  const tok = pageTok || mintEphemeralToken();
-  const streamUrl = `/stream-log?token=${encodeURIComponent(tok)}`;
-
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="referrer" content="no-referrer" />
-  <meta name="color-scheme" content="dark light" />
-  <title>Live Logs</title>
-  <style>
-    body{margin:0;font:14px/1.4 ui-monospace,Menlo,Consolas,monospace}
-    #log{padding:12px;white-space:pre-wrap;word-break:break-word}
-    .status{color:#888;padding:8px 12px}
-  </style>
-</head>
-<body>
-  <div class="status">Connecting…</div>
-  <pre id="log"></pre>
-  <script>
-    const logEl = document.getElementById('log');
-    const statusEl = document.querySelector('.status');
-    const es = new EventSource(${JSON.stringify(streamUrl)});
-
-    es.onopen = () => {
-      statusEl.textContent = 'Connected';
-    };
-
-    es.addEventListener('reset', () => {
-      logEl.textContent = '';
-      statusEl.textContent = 'Repainting…';
-    });
-
-    es.onmessage = (e) => {
-      logEl.textContent += e.data + '\\n';
-      statusEl.textContent = '';
-      window.scrollTo(0, document.body.scrollHeight);
-    };
-
-    es.onerror = (e) => {
-      statusEl.textContent = 'Disconnected — retrying…';
-      console.debug('SSE error', e, 'readyState=', es.readyState);
-    };
-  </script>
-</body>
-</html>`);
-});
-
-app.get("/view-log", requireAdmin, (req, res) => {
-  return res.type("text/plain").send(LOGS.join("\n") || "No logs yet.");
-});
-
-app.get("/geo-debug", (req, res) => {
-  if (!isAdmin(req)) return res.status(403).send("Forbidden");
-  res.json({
-    ip: getClientIp(req),
-    resolvedCountry: getCountry(req),
-    headers: {
-      "cf-ipcountry": req.headers["cf-ipcountry"] || null,
-      "cf-edge-country": req.headers["cf-edge-country"] || null,
-      "x-nf-geo": req.headers["x-nf-geo"] || null,
-      "x-vercel-ip-country": req.headers["x-vercel-ip-country"] || null
-    }
-  });
-});
-
-app.get("/favicon.ico", (_req, res) => {
-  res.set("Cache-Control","public, max-age=86400");
-  return res.status(204).end();
-});
-
-// ================== PUBLIC CONTENT HELPERS ==================
-function dayStamp(d = new Date()) {
-  return d.toISOString().slice(0, 10);
-}
-
-function weekStamp(d = new Date()) {
-  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dayNum = dt.getUTCDay() || 7;
-  dt.setUTCDate(dt.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((dt - yearStart) / 86400000) + 1) / 7);
-  return `${dt.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
-function rotationSeed() {
-  if (PUBLIC_ROTATION_MODE === "weekly") return weekStamp();
-  if (PUBLIC_ROTATION_MODE === "fixed") return "fixed";
-  return dayStamp();
-}
-
-function hash32(input) {
-  const hex = crypto.createHash("sha256").update(String(input)).digest("hex").slice(0, 8);
-  return parseInt(hex, 16) >>> 0;
-}
-
-function deterministicPick(items, seed, count = 3) {
-  if (!Array.isArray(items) || items.length === 0) return [];
-  const out = [];
-  const n = Math.min(Math.max(1, count), items.length);
-  const used = new Set();
-  let i = 0;
-  while (out.length < n && i < (items.length * 3)) {
-    const idx = hash32(`${seed}:${i}`) % items.length;
-    if (!used.has(idx)) {
-      used.add(idx);
-      out.push(items[idx]);
-    }
-    i += 1;
-  }
-  return out;
-}
-
-function wildcardMatches(hostname, wildcardPattern) {
-  const cleanHost = String(hostname || "").toLowerCase().split(":")[0];
-  const cleanPattern = String(wildcardPattern || "").toLowerCase().trim();
-  if (!cleanHost || !cleanPattern.startsWith("*.") || cleanPattern.length < 3) return false;
-  const suffix = cleanPattern.slice(2);
-  if (!suffix) return false;
-  if (!cleanHost.endsWith(`.${suffix}`)) return false;
-  return cleanHost !== suffix;
-}
-
-function resolvePublicBaseUrls(req) {
-  const host = String(req.get("host") || "localhost");
-  const hostNoPort = host.split(":")[0];
-  const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
-  const requestBase = `${proto}://${host}`;
-
-  const configured = parsePublicBaseUrlEntries();
-  if (configured.length === 0) {
-    return [requestBase];
-  }
-
-  const out = [];
-  for (const entry of configured) {
-    if (entry === "*") {
-      out.push(requestBase);
-      continue;
-    }
-
-    const asUrl = (() => {
-      try {
-        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-        return new URL(value);
-      } catch {
-        return null;
-      }
-    })();
-
-    if (!asUrl) continue;
-
-    const wildcardHost = asUrl.hostname;
-    if (wildcardHost.startsWith("*.")) {
-      if (wildcardMatches(hostNoPort, wildcardHost)) {
-        out.push(`${asUrl.protocol}//${host}`);
-      }
-      continue;
-    }
-
-    out.push(`${asUrl.protocol}//${asUrl.host}`);
-  }
-
-  return [...new Set(out.filter(Boolean))] || [requestBase];
-}
-
-function parsePublicBaseUrlEntries() {
-  return PUBLIC_SITE_BASE_URL
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 // ================== ENHANCED PUBLIC CONTENT SURFACE ==================
 // Now with traffic blending capabilities, multiple personas, and dynamic paths
 
@@ -4348,6 +3961,393 @@ function initEnhancedPublicContent() {
 
 // Replace the old PUBLIC_CONTENT calls with this
 initEnhancedPublicContent();
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.type === "entity.parse.failed") {
+    try { addLog(`[TS-CLIENT] JSON parse error: ${String(err.message||'').slice(0,120)}`); addSpacer(); } catch {}
+    req.body = null;
+    return next();
+  }
+  return next(err);
+});
+
+app.use((req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Permissions-Policy", "interest-cohort=(), browsing-topics=()");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  if (process.env.ENABLE_HSTS === "1") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  }
+  next();
+});
+
+app.use(validateRedirectRequest);
+
+// Apply rate limiters BEFORE routes
+app.use("/challenge",          limitChallenge);
+app.use("/ts-client-log",      limitTsClientLog);
+app.use("/interstitial-human", limitTsClientLog);
+app.use("/stream-log", (req, res, next) => {
+  if (isAdminSSE(req)) return next();
+  return limitSseUnauth(req, res, next);
+});
+
+// ✅ Put the debug route here (before your normal routes)
+if (process.env.IP_DEBUG === '1') {
+  app.get('/_debug/ip', (req, res) => {
+    const clientIp = getClientIp(req); // Use the same function!
+    res.json({
+      trustProxy: req.app.get('trust proxy'),
+      clientIp: clientIp,
+      reqIp: req.ip,
+      reqIps: req.ips,
+      xff: req.headers['x-forwarded-for'] || null,
+      xVercelForwarded: req.headers['x-vercel-forwarded-for'] || null,
+      xReal: req.headers['x-real-ip'] || null,
+      nf: req.headers['x-nf-client-connection-ip'] || null,
+      allHeaders: {
+        'x-forwarded-for': req.headers['x-forwarded-for'],
+        'x-vercel-forwarded-for': req.headers['x-vercel-forwarded-for'],
+        'x-real-ip': req.headers['x-real-ip'],
+        'x-vercel-ip': req.headers['x-vercel-ip']
+      }
+    });
+  });
+}
+
+// ================== ROUTES ==================
+app.post("/decrypt-challenge-data",
+  express.json({ limit: "1kb" }),
+  (req, res) => {
+    const { data } = req.body || {};
+    if (!data) return res.json({ success: false, error: "No data" });
+
+    const payload = decryptChallengeData(data);
+    if (!payload) return res.json({ success: false, error: "Decryption failed" });
+
+    const raw = parseInt(process.env.CHALLENGE_PAYLOAD_TTL_MIN || "5", 10);
+    const ttlMin = Number.isFinite(raw) && raw > 0 ? raw : 5; // guard
+
+    // extra sanity: ensure payload.ts is a number
+    const issuedAt = typeof payload.ts === "number" ? payload.ts : 0;
+    if (Date.now() - issuedAt > ttlMin * 60 * 1000) {
+      return res.json({ success: false, error: "Payload expired" });
+    }
+
+    return res.json({ success: true, payload });
+  }
+);
+
+app.get("/health", (_req, res) => res.json({ ok:true, time:new Date().toISOString() }));
+
+app.post(
+"/ts-client-log",
+  express.text({ type: "*/*", limit: "64kb" }),
+  (req, res) => {
+    const ip  = getClientIp(req) || "unknown";
+    const ua  = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
+    const ct  = req.get("content-type") || "-";
+    const len = req.get("content-length") || "0";
+
+    let payload = null;
+
+    if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
+      payload = req.body;
+    } else {
+      const raw = typeof req.body === "string" ? req.body : "";
+
+      if (raw && raw.trim()) {
+        try { payload = JSON.parse(raw); } catch { }
+      }
+
+      if ((!payload || typeof payload !== "object") && raw && raw.includes("=")) {
+        try {
+          const params = new URLSearchParams(raw);
+          const obj = {};
+          for (const [k, v] of params.entries()) obj[k] = v;
+          payload = obj;
+        } catch { }
+      }
+
+      if (!payload) req.__rawPreview = raw.slice(0, 200);
+    }
+
+    if (!payload || typeof payload !== "object" || !payload.phase) {
+      const preview = req.__rawPreview != null
+        ? JSON.stringify(req.__rawPreview)
+        : (typeof req.body === "object" ? JSON.stringify(req.body).slice(0, 200) : '""');
+      addLog(`[TS-CLIENT:empty] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" ct=${safeLogValue(ct)} len=${safeLogValue(len)} preview=${safeLogValue(preview)}`);
+      return res.status(204).end();
+    }
+
+    addLog(`[TS-CLIENT:${safeLogValue(payload.phase)}] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" ${safeLogJson(payload)}`);
+    addSpacer();
+    res.status(204).end();
+  }
+);
+
+app.post(
+"/interstitial-human",
+  express.json({ type: "application/json", limit: "4kb" }),
+  (req, res) => {
+    const body = req.body || {};
+    const nextEnc = typeof body.next === "string" ? body.next.slice(0, 4096) : "";
+    if (!nextEnc) {
+      return res.status(400).json({ ok: false, error: "missing_next" });
+    }
+
+    markInterstitialHuman(nextEnc);
+
+    const ip = getClientIp(req) || "unknown";
+    const ua = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
+    addLog(
+      `[INTERSTITIAL-HUMAN] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" nextLen=${nextEnc.length}`
+    );
+    addSpacer();
+
+    res.json({ ok: true });
+  }
+);
+
+app.get("/stream-log", (req, res) => {
+  if (!isAdminSSE(req)) return res.status(403).end("Forbidden: missing admin token (SSE)");
+
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  try { res.write(": connected\n\n"); } catch {}
+
+  const lastIdHdr = req.get("last-event-id");
+  const lastId = lastIdHdr ? parseInt(lastIdHdr, 10) : NaN;
+  let startIdx = Math.max(0, LOG_IDS.length - BACKLOG_ON_CONNECT);
+  if (Number.isFinite(lastId) && lastId >= 0) {
+    const pos = LOG_IDS.lastIndexOf(lastId);
+    if (pos >= 0) startIdx = pos + 1;
+  } else {
+    res.write(`event: reset\ndata: {"ts":${Date.now()}}\n\n`);
+  }
+
+  for (let i = startIdx; i < LOGS.length; i++) {
+    sseSend(res, LOGS[i], LOG_IDS[i]);
+  }
+
+  LOG_LISTENERS.add(res);
+
+  try { res.write(": hb-ready\n\n"); } catch {}
+
+  const hb = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 25000);
+
+  let cleaned = false;
+  function cleanup() {
+    if (cleaned) return;
+    cleaned = true;
+    try { clearInterval(hb); } catch {}
+    LOG_LISTENERS.delete(res);
+  }
+
+  req.once("aborted", cleanup);
+  req.once("close", cleanup);
+  res.once("close", cleanup);
+  res.once("error", cleanup);
+  res.once("finish", cleanup);
+
+  req.socket?.setTimeout?.(0);
+  req.socket?.setKeepAlive?.(true);
+});
+
+app.get("/view-log-live", (req, res) => {
+  if (!(isAdmin(req) || isAdminSSE(req))) {
+    return res.status(401).type("text/plain").send("Unauthorized");
+  }
+
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+  );
+
+  const pageTok = req.query.token && String(req.query.token);
+  const tok = pageTok || mintEphemeralToken();
+  const streamUrl = `/stream-log?token=${encodeURIComponent(tok)}`;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Live Logs</title>
+  <style>
+    body{margin:0;font:14px/1.4 ui-monospace,Menlo,Consolas,monospace}
+    #log{padding:12px;white-space:pre-wrap;word-break:break-word}
+    .status{color:#888;padding:8px 12px}
+  </style>
+</head>
+<body>
+  <div class="status">Connecting…</div>
+  <pre id="log"></pre>
+  <script>
+    const logEl = document.getElementById('log');
+    const statusEl = document.querySelector('.status');
+    const es = new EventSource(${JSON.stringify(streamUrl)});
+
+    es.onopen = () => {
+      statusEl.textContent = 'Connected';
+    };
+
+    es.addEventListener('reset', () => {
+      logEl.textContent = '';
+      statusEl.textContent = 'Repainting…';
+    });
+
+    es.onmessage = (e) => {
+      logEl.textContent += e.data + '\\n';
+      statusEl.textContent = '';
+      window.scrollTo(0, document.body.scrollHeight);
+    };
+
+    es.onerror = (e) => {
+      statusEl.textContent = 'Disconnected — retrying…';
+      console.debug('SSE error', e, 'readyState=', es.readyState);
+    };
+  </script>
+</body>
+</html>`);
+});
+
+app.get("/view-log", requireAdmin, (req, res) => {
+  return res.type("text/plain").send(LOGS.join("\n") || "No logs yet.");
+});
+
+app.get("/geo-debug", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send("Forbidden");
+  res.json({
+    ip: getClientIp(req),
+    resolvedCountry: getCountry(req),
+    headers: {
+      "cf-ipcountry": req.headers["cf-ipcountry"] || null,
+      "cf-edge-country": req.headers["cf-edge-country"] || null,
+      "x-nf-geo": req.headers["x-nf-geo"] || null,
+      "x-vercel-ip-country": req.headers["x-vercel-ip-country"] || null
+    }
+  });
+});
+
+app.get("/favicon.ico", (_req, res) => {
+  res.set("Cache-Control","public, max-age=86400");
+  return res.status(204).end();
+});
+
+// ================== PUBLIC CONTENT HELPERS ==================
+function dayStamp(d = new Date()) {
+  return d.toISOString().slice(0, 10);
+}
+
+function weekStamp(d = new Date()) {
+  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((dt - yearStart) / 86400000) + 1) / 7);
+  return `${dt.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function rotationSeed() {
+  if (PUBLIC_ROTATION_MODE === "weekly") return weekStamp();
+  if (PUBLIC_ROTATION_MODE === "fixed") return "fixed";
+  return dayStamp();
+}
+
+function hash32(input) {
+  const hex = crypto.createHash("sha256").update(String(input)).digest("hex").slice(0, 8);
+  return parseInt(hex, 16) >>> 0;
+}
+
+function deterministicPick(items, seed, count = 3) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const out = [];
+  const n = Math.min(Math.max(1, count), items.length);
+  const used = new Set();
+  let i = 0;
+  while (out.length < n && i < (items.length * 3)) {
+    const idx = hash32(`${seed}:${i}`) % items.length;
+    if (!used.has(idx)) {
+      used.add(idx);
+      out.push(items[idx]);
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function wildcardMatches(hostname, wildcardPattern) {
+  const cleanHost = String(hostname || "").toLowerCase().split(":")[0];
+  const cleanPattern = String(wildcardPattern || "").toLowerCase().trim();
+  if (!cleanHost || !cleanPattern.startsWith("*.") || cleanPattern.length < 3) return false;
+  const suffix = cleanPattern.slice(2);
+  if (!suffix) return false;
+  if (!cleanHost.endsWith(`.${suffix}`)) return false;
+  return cleanHost !== suffix;
+}
+
+function resolvePublicBaseUrls(req) {
+  const host = String(req.get("host") || "localhost");
+  const hostNoPort = host.split(":")[0];
+  const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
+  const requestBase = `${proto}://${host}`;
+
+  const configured = parsePublicBaseUrlEntries();
+  if (configured.length === 0) {
+    return [requestBase];
+  }
+
+  const out = [];
+  for (const entry of configured) {
+    if (entry === "*") {
+      out.push(requestBase);
+      continue;
+    }
+
+    const asUrl = (() => {
+      try {
+        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+        return new URL(value);
+      } catch {
+        return null;
+      }
+    })();
+
+    if (!asUrl) continue;
+
+    const wildcardHost = asUrl.hostname;
+    if (wildcardHost.startsWith("*.")) {
+      if (wildcardMatches(hostNoPort, wildcardHost)) {
+        out.push(`${asUrl.protocol}//${host}`);
+      }
+      continue;
+    }
+
+    out.push(`${asUrl.protocol}//${asUrl.host}`);
+  }
+
+  return [...new Set(out.filter(Boolean))] || [requestBase];
+}
+
+function parsePublicBaseUrlEntries() {
+  return PUBLIC_SITE_BASE_URL
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
 
 app.get("/robots.txt", (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=3600");
