@@ -3838,12 +3838,14 @@ function registerEnhancedPublicRoutes() {
   // Register ALL generated paths
 allPaths.forEach(path => {
   app.get(path, (req, res) => {
-    // Determine content type
-    const ext = path.split('.').pop();
-    const wantsJson = req.headers.accept?.includes('application/json') || 
-                     path.startsWith('/api/');
-    
-    if (wantsJson || persona.contentTypes.includes('json')) {
+    const normalizedPath = String(path || '').toLowerCase();
+    const acceptHeader = String(req.headers.accept || '').toLowerCase();
+    const hasJsonExtension = normalizedPath.endsWith('.json');
+    const isApiPath = normalizedPath.startsWith('/api/');
+    const wantsJson = acceptHeader.includes('application/json');
+
+    // Serve JSON only for explicit API/JSON requests.
+    if (isApiPath || hasJsonExtension || wantsJson) {
       // API response
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Cache-Control', 'no-cache');
