@@ -3581,8 +3581,9 @@ function getActivePersona() {
 }
 
 // ================== GENERATE DUMMY PATHS ==================
-function generateAllPaths(persona) {
+function generateAllPaths(persona, rotationSeed) {
   const paths = [];
+  const seed = rotationSeed || 'default-seed'; // Use provided seed or fallback
   
   // Add standard footer links
   persona.footerLinks.forEach(link => {
