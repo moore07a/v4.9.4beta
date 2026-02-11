@@ -3284,10 +3284,10 @@ const PUBLIC_PAGES = [
   {
     path: "/about",
     title: "About",
-    summary: "Purpose-built edge delivery and security controls for link-driven traffic.",
+    summary: "Purpose-built edge delivery and security controls for traffic.",
     highlights: [
-      "Hardened request validation with controlled challenge flow",
-      "Country/ASN policy controls with fallback geo resolution",
+      "Hardened request validation",
+      "Fast recovery time",
       "Operational telemetry designed for incident response"
     ],
     ctaTitle: "What this page is",
@@ -3296,14 +3296,14 @@ const PUBLIC_PAGES = [
   {
     path: "/services",
     title: "Services",
-    summary: "Traffic routing, policy enforcement, and resilient verification endpoints.",
+    summary: "Enterprise-grade security verification and access management solutions for modern web applications.",
     highlights: [
-      "Adaptive challenge and scanner-safe interstitial handling",
-      "Rate limiting, strike-based bans, and deny-cache controls",
-      "Domain allowlist validation before redirect handoff"
+      "Advanced with multi-layer verification",
+      "Real-time threat intelligence and behavioral analysis",
+      "Comprehensive security policy enforcement at the edge"
     ],
-    ctaTitle: "Where to start",
-    ctaBody: "Integrate the redirect endpoint and define your allowlist/security policy first."
+    ctaTitle: "Get started",
+    ctaBody: "Deploy our security verification layer in minutes with simple integration and immediate protection."
   },
   {
     path: "/docs",
