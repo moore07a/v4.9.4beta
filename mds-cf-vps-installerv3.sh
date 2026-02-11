@@ -441,8 +441,8 @@ server {
 
   error_page 404 /404.html;
 
-  location = / { try_files /index.html =404; }
-  location = /index.html { try_files /index.html =404; }
+  # Keep only explicit access to local 404 page.
+  # All primary routes (including /) should be served by the upstream app.
   location = /404.html { try_files /404.html =404; }
 
   location ~* \\.(css|js|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|map)$ {
