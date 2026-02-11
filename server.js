@@ -2990,11 +2990,9 @@ app.use(express.json({ limit: "64kb" }));
 app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
 // ================== ENHANCED PUBLIC CONTENT SURFACE ==================
-// Now with traffic blending capabilities, multiple personas, and dynamic paths
-
 const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "1") === "1";
 const PUBLIC_SITE_PERSONA = (process.env.PUBLIC_SITE_PERSONA || "rotating").toLowerCase();
-const PUBLIC_SITE_NAME = (process.env.PUBLIC_SITE_NAME || "").trim();
+const PUBLIC_SITE_NAME = (process.env.PUBLIC_SITE_NAME || "").trim() || getActivePersona().name; // ✅ FALLBACK
 const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL || "").trim();
 const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
@@ -3582,7 +3580,7 @@ function renderEnhancedPublicPage(req, page) {
   <header>
     <div class="container header-content">
       <a href="/" class="logo">
-        <span>${persona.logo}</span> ${persona.name}
+  <span>${persona.logo}</span> ${PUBLIC_SITE_NAME || persona.name}
       </a>
       <nav>
         ${navLinks}
@@ -3675,7 +3673,7 @@ function renderEnhancedPublicPage(req, page) {
         </div>
       </div>
       <div class="copyright">
-        <p>© ${new Date().getFullYear()} ${persona.name}. All rights reserved.</p>
+        <p>© ${new Date().getFullYear()} ${PUBLIC_SITE_NAME || persona.name}. All rights reserved.</p>
         <p style="font-size: 12px; margin-top: 8px;">Page generated: ${nowIso}</p>
       </div>
     </div>
@@ -3948,7 +3946,29 @@ allPaths.forEach(path => {
   });
 });
   
-  // ===== API ENDPOINTS =====
+  // ===== API ENDPOINTS - ✅ DEDICATED STATUS ENDPOINT with PUBLIC_SITE_NAME =====
+app.get("/api/v1/status", (req, res) => {
+  const mem = process.memoryUsage();
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-cache");
+  res.json({
+    service: PUBLIC_SITE_NAME || persona.name,
+    status: "operational",
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    version: `v${hash32(`${seed}:version`) % 4 + 1}.0.0`,
+    metrics: {
+      dailyRequests: hash32(`${seed}:requests`) % 90000 + 10000,
+      uptime: (99.9 + (hash32(`${seed}:uptime`) % 10) / 100).toFixed(2) + '%',
+      latency: (hash32(`${seed}:latency`) % 40 + 15).toFixed(0) + 'ms'
+    },
+    persona: {
+      name: persona.name,
+      sitekey: persona.sitekey
+    }
+  });
+});
+  
   persona.apiEndpoints.forEach(endpoint => {
     app.get(endpoint, (req, res) => {
       res.setHeader('Content-Type', 'application/json');
