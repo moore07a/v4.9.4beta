@@ -4132,7 +4132,7 @@ function startPublicBackgroundTraffic() {
   const generateVisit = async () => {
     try {
       const persona = getActivePersona();
-      const allPaths = generateAllPaths(persona);
+      const allPaths = generateAllPaths(persona, seed);
       
       // Pick a random path
       const randomPath = allPaths[Math.floor(Math.random() * allPaths.length)];
@@ -4208,7 +4208,7 @@ function registerEnhancedPublicRoutes() {
   if (!PUBLIC_CONTENT_SURFACE) return;
   
   const persona = getActivePersona();
-  const allPaths = generateAllPaths(persona);
+  const allPaths = generateAllPaths(persona, rotationSeed());
   const seed = rotationSeed();
   
   addLog(`[PUBLIC-CONTENT] Active persona: ${persona.name} (${persona.sitekey})`);
