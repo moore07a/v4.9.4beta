@@ -4486,7 +4486,8 @@ function resolvePublicBaseUrls(req) {
     out.push(`${asUrl.protocol}//${asUrl.host}`);
   }
 
-  return [...new Set(out.filter(Boolean))] || [requestBase];
+  const resolved = [...new Set(out.filter(Boolean))];
+  return resolved.length > 0 ? resolved : [requestBase];
 }
 
 function parsePublicBaseUrlEntries() {
