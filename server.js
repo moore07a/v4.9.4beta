@@ -3276,7 +3276,7 @@ app.get("/favicon.ico", (_req, res) => {
 
 // ================== PUBLIC CONTENT SURFACE (LEGITIMATE) ==================
 const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "1") === "1";
-const PUBLIC_SITE_NAME = (process.env.PUBLIC_SITE_NAME || "Edge Delivery Gateway").trim();
+const PUBLIC_SITE_NAME = (process.env.PUBLIC_SITE_NAME || "Wellness Lab").trim();
 const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL || "").trim();
 const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
 
@@ -3284,73 +3284,78 @@ const PUBLIC_PAGES = [
   {
     path: "/about",
     title: "About",
-    summary: "Purpose-built edge delivery and security controls for traffic.",
+    summary: "Evidence-based health and wellness guidance for sustainable, long-term wellbeing.",
     highlights: [
-      "Hardened request validation",
-      "Fast recovery time",
-      "Operational telemetry designed for incident response"
+      "Research-backed fitness protocols for all experience levels",
+      "Nutrition science translated into practical daily habits",
+      "Mental resilience strategies from sports psychology"
     ],
-    ctaTitle: "What this page is",
-    ctaBody: "A concise overview of the service layer backing your public entry points."
+    ctaTitle: "Our philosophy",
+    ctaBody: "Health isn't about perfection—it's about consistency. We break down complex science into simple, repeatable actions."
   },
   {
     path: "/services",
-    title: "Services",
-    summary: "Enterprise-grade security verification and access management solutions for modern web applications.",
+    title: "Fitness Fundamentals",
+    summary: "Core strength, mobility, and cardiovascular programming for busy professionals.",
     highlights: [
-      "Advanced with multi-layer verification",
-      "Real-time threat intelligence and behavioral analysis",
-      "Comprehensive security policy enforcement at the edge"
+      "30-minute full-body workouts requiring minimal equipment",
+      "Mobility sequences to counteract desk posture",
+      "Recovery protocols that actually fit your schedule"
     ],
-    ctaTitle: "Get started",
-    ctaBody: "Deploy our security verification layer in minutes with simple integration and immediate protection."
+    ctaTitle: "Try this today",
+    ctaBody: "Start with our 7-day mobility reset—no gym membership required."
   },
   {
     path: "/docs",
-    title: "Documentation",
-    summary: "Deployment and operations guidance for secure routing environments.",
+    title: "Nutrition Guide",
+    summary: "Practical eating strategies that support energy, focus, and body composition goals.",
     highlights: [
-      "Environment-based configuration for edge and proxy modes",
-      "Health checks and status endpoints for runtime verification",
-      "Sitemap and robots support for public route discoverability"
+      "Meal prep frameworks that save time and reduce decision fatigue",
+      "Hydration tracking made simple",
+      "Smart supplementation: what works and what's wasted"
     ],
-    ctaTitle: "Recommended next step",
-    ctaBody: "Validate your env settings, then run smoke tests against /about, /status, and /sitemap.xml."
+    ctaTitle: "Kitchen prep",
+    ctaBody: "Download our one-page grocery guide and weekly meal template."
   },
   {
     path: "/status",
-    title: "Status",
-    summary: "Live service status, uptime snapshot, and current operational mode.",
+    title: "Sleep & Recovery",
+    summary: "The overlooked foundation of health—better rest without the rigid rules.",
     highlights: [
-      "Uptime and heartbeat visibility from in-process runtime",
-      "Public content mode and sitemap base URL traceability",
-      "Designed to be safe for browser checks and synthetic monitoring"
+      "Circadian rhythm resets for shift workers and frequent travelers",
+      "Evening wind-down protocols that actually work",
+      "Recovery metrics that matter (and ones you can ignore)"
     ],
-    ctaTitle: "How to verify",
-    ctaBody: "Use /api/v1/status for machine checks and this page for quick human confirmation."
+    ctaTitle: "Tonight's reset",
+    ctaBody: "Try our 10-minute pre-sleep routine and track your energy tomorrow."
   },
   {
     path: "/contact",
-    title: "Contact",
-    summary: "Operational support and escalation guidance for service owners.",
+    title: "Community",
+    summary: "Join a community focused on sustainable health, not quick fixes.",
     highlights: [
-      "Primary response path for routing and verification issues",
-      "Escalation context should include timestamp and request host",
-      "Attach recent health/status output when reporting incidents"
+      "Weekly Q&A sessions with fitness coaches",
+      "Accountability circles for long-term habit change",
+      "Member spotlights and success stories"
     ],
-    ctaTitle: "Support checklist",
-    ctaBody: "Share affected URL, timezone, and reproducible steps to speed up triage."
+    ctaTitle: "Stay connected",
+    ctaBody: "Subscribe to our newsletter for one actionable tip every Wednesday."
   }
 ];
 
 const PUBLIC_CARD_LIBRARY = [
-  "Global edge routing and policy-driven delivery",
-  "Challenge-aware interstitial handling with hardened headers",
-  "Operationally safe status reporting and health telemetry",
-  "Deterministic, cache-friendly public information pages",
-  "Domain-aware sitemap generation for multi-host deployments",
-  "Consistent diagnostics and structured runtime observability",
-  "Resilient request validation with explicit public route bypass"
+  "Morning mobility: 5 minutes to undo sleep stiffness",
+  "The 80/20 rule of sustainable nutrition",
+  "Heart rate variability: what your numbers mean",
+  "Desk stretches that won't make you feel self-conscious",
+  "Hydration beyond 'drink more water'",
+  "Walking meetings: the underrated productivity hack",
+  "Strength training after 40: adjusting expectations, not goals",
+  "Sleep hygiene without the anxiety",
+  "Pre-workout nutrition for early birds",
+  "Recovery tools ranked by evidence (and price)",
+  "Mindful eating without the woo",
+  "The minimum effective dose of cardio"
 ];
 
 function parsePublicBaseUrlEntries() {
