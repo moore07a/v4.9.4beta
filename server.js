@@ -3505,7 +3505,7 @@ function renderPublicPage(_req, page) {
 <body>
   <main>
     <section class="hero">
-      <span class="eyebrow">Public Service Surface</span>
+      <span class="eyebrow">Health Tips & Wellness Blog</span>
       <h1>${page.title}</h1>
       <p>${page.summary}</p>
       <div class="grid">
