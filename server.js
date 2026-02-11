@@ -3084,10 +3084,6 @@ const PERSONAS = {
     { text: "Home", path: "/" },
     { text: "Solutions", path: "/solutions" },
     { text: "Pricing", path: "/pricing" },
-    // ✅ ADD THESE THREE NEW PRICING PAGES
-    { text: "Starter", path: "/pricing/starter" },
-    { text: "Business", path: "/pricing/business" },  
-    { text: "Enterprise", path: "/pricing/enterprise" },
     { text: "Docs", path: "/docs" },
     { text: "Status", path: "/status" },
     { text: "Security", path: "/security" },
@@ -3271,6 +3267,7 @@ function generateAllPaths(persona, rotationSeed) {
 }
 
 // ================== ENHANCED PAGE GENERATOR ==================
+
 function renderEnhancedPublicPage(req, page) {
   const persona = getActivePersona();
   const seed = `${rotationSeed()}:${persona.sitekey}:${page.path}`;
@@ -3286,7 +3283,7 @@ function renderEnhancedPublicPage(req, page) {
     .map(feature => `<li>${feature}</li>`)
     .join("");
   
-  // Generate dummy metrics (consistent per day)
+  // Generate fake metrics (consistent per day)
   const dailyRequests = hash32(`${seed}:requests`) % 90000 + 10000;
   const uptime = (99.9 + (hash32(`${seed}:uptime`) % 10) / 100).toFixed(2);
   const latency = (hash32(`${seed}:latency`) % 40 + 15).toFixed(0);
@@ -3302,9 +3299,81 @@ function renderEnhancedPublicPage(req, page) {
   } else if (page.path === '/status') {
     pageTitle = "System Status";
     pageDescription = "Real-time operational status";
-  } else if (page.path.includes('/pricing')) {
+  } else if (page.path === '/pricing') {
     pageTitle = "Pricing Plans";
     pageDescription = `Flexible ${persona.name} pricing for any scale`;
+    
+    // ✅ PRICING PAGE WITH COMPLETE TIERS
+    pageContent = `
+      <div style="margin-top: 40px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; margin-top: 30px;">
+          
+          <!-- STARTER PLAN -->
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 32px 24px; position: relative;">
+            <h3 style="font-size: 24px; margin: 0 0 8px 0; color: var(--text);">Starter</h3>
+            <div style="font-size: 14px; color: var(--muted); margin-bottom: 24px;">For small projects & teams</div>
+            <div style="margin-bottom: 24px;">
+              <span style="font-size: 48px; font-weight: 700; color: var(--primary);">$49</span>
+              <span style="font-size: 16px; color: var(--muted);">/month</span>
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0 0 32px 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 1 TB storage</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 10 GB/month egress</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 30-day retention</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Basic support</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px; color: var(--muted);">✗ SSO</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px; color: var(--muted);">✗ Compliance reporting</li>
+            </ul>
+            <a href="/signup" style="display: block; text-align: center; background: #f1f5f9; color: var(--text); text-decoration: none; padding: 12px; border-radius: 8px; font-weight: 500; border: 1px solid var(--border);">Get Started</a>
+          </div>
+          
+          <!-- BUSINESS PLAN (FEATURED) -->
+          <div style="background: white; border: 2px solid var(--primary); border-radius: 16px; padding: 32px 24px; position: relative; transform: scale(1.02); box-shadow: 0 10px 25px rgba(46, 125, 50, 0.1);">
+            <div style="position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--primary); color: white; padding: 4px 16px; border-radius: 20px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">MOST POPULAR</div>
+            <h3 style="font-size: 24px; margin: 0 0 8px 0; color: var(--text);">Business</h3>
+            <div style="font-size: 14px; color: var(--muted); margin-bottom: 24px;">For growing companies</div>
+            <div style="margin-bottom: 24px;">
+              <span style="font-size: 48px; font-weight: 700; color: var(--primary);">$199</span>
+              <span style="font-size: 16px; color: var(--muted);">/month</span>
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0 0 32px 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 10 TB storage</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 100 GB/month egress</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 90-day retention</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Priority support</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ SSO authentication</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px; color: var(--muted);">✗ Compliance reporting</li>
+            </ul>
+            <a href="/signup" style="display: block; text-align: center; background: var(--primary); color: white; text-decoration: none; padding: 12px; border-radius: 8px; font-weight: 500;">Get Started</a>
+          </div>
+          
+          <!-- ENTERPRISE PLAN -->
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 32px 24px; position: relative;">
+            <h3 style="font-size: 24px; margin: 0 0 8px 0; color: var(--text);">Enterprise</h3>
+            <div style="font-size: 14px; color: var(--muted); margin-bottom: 24px;">For large organizations</div>
+            <div style="margin-bottom: 24px;">
+              <span style="font-size: 48px; font-weight: 700; color: var(--primary);">Custom</span>
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0 0 32px 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Unlimited storage</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Custom egress</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Unlimited retention</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ 24/7 phone support</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Compliance reporting</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 8px;">✓ Dedicated account manager</li>
+            </ul>
+            <a href="/contact" style="display: block; text-align: center; background: #f1f5f9; color: var(--text); text-decoration: none; padding: 12px; border-radius: 8px; font-weight: 500; border: 1px solid var(--border);">Contact Sales</a>
+          </div>
+          
+        </div>
+        
+        <!-- ANNUAL SAVINGS NOTE -->
+        <div style="text-align: center; margin-top: 40px; padding: 20px; background: #f8fafc; border-radius: 8px; color: var(--muted);">
+          💰 Save 20% with annual billing • All plans include 99.999999999% durability • 30-day free trial
+        </div>
+      </div>
+    `;
+    
   } else if (page.path.includes('/docs')) {
     pageTitle = "Documentation";
     pageDescription = `Technical documentation for ${persona.name}`;
@@ -3552,6 +3621,12 @@ function renderEnhancedPublicPage(req, page) {
             <div class="feature-desc">Enterprise-grade ${feature.toLowerCase()} for demanding workloads.</div>
           </div>
         `).join('')}
+      </div>
+    ` : page.path === '/pricing' ? `
+      <div class="page-content">
+        <h1>${pageTitle}</h1>
+        <p style="color: var(--muted); font-size: 18px; margin-bottom: 32px;">${pageDescription}</p>
+        ${pageContent}
       </div>
     ` : `
       <div class="page-content">
