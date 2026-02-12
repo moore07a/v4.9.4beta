@@ -3294,9 +3294,6 @@ function renderEnhancedPublicPage(req, page) {
   if (page.path === '/') {
     pageTitle = persona.name;
     pageDescription = persona.description;
-  } else if (page.path === '/status') {
-    pageTitle = "System Status";
-    pageDescription = "Real-time operational status";
   } else if (page.path === '/pricing') {
     pageTitle = "Pricing Plans";
     pageDescription = `Flexible ${persona.name} pricing for any scale`;
@@ -3371,7 +3368,264 @@ function renderEnhancedPublicPage(req, page) {
         </div>
       </div>
     `;
-    
+
+  } else if (page.path === '/solutions') {
+    pageTitle = "Solutions";
+    pageDescription = `Industry solutions powered by ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+        <h2 style="font-size: 28px; margin-bottom: 30px;">Solutions for every industry</h2>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; margin-bottom: 50px;">
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🛒</div>
+            <h3 style="font-size: 22px; margin: 0 0 10px 0;">E-commerce</h3>
+            <p style="color: var(--muted); margin-bottom: 20px;">Store product images, user content, and backups.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ 11x9s durability</li>
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ Global CDN</li>
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ Image optimization</li>
+            </ul>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🏥</div>
+            <h3 style="font-size: 22px; margin: 0 0 10px 0;">Healthcare</h3>
+            <p style="color: var(--muted); margin-bottom: 20px;">HIPAA-compliant storage for medical imaging and records.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ HIPAA eligibility</li>
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ Audit logging</li>
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ Access controls</li>
+            </ul>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🎬</div>
+            <h3 style="font-size: 22px; margin: 0 0 10px 0;">Media & Entertainment</h3>
+            <p style="color: var(--muted); margin-bottom: 20px;">Store and stream video content at scale.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ Video transcoding</li>
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ Adaptive bitrate</li>
+              <li style="padding: 6px 0; display: flex; align-items: center; gap: 8px;">✓ DRM support</li>
+            </ul>
+          </div>
+
+        </div>
+
+        <div style="background: #f8fafc; border-radius: 16px; padding: 40px; text-align: center; margin-top: 30px;">
+          <h3 style="font-size: 24px; margin: 0 0 15px 0;">Not sure which solution fits?</h3>
+          <p style="color: var(--muted); margin-bottom: 25px; font-size: 18px;">Talk to our solutions architects for a personalized recommendation.</p>
+          <a href="/contact" style="display: inline-block; background: var(--primary); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500;">Contact Sales</a>
+        </div>
+      </div>
+    `;
+
+  } else if (page.path === '/docs') {
+    pageTitle = "Documentation";
+    pageDescription = `Technical documentation for ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 40px;">
+
+          <div>
+            <h2 style="font-size: 24px; margin-top: 0;">Getting Started</h2>
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 30px;">
+              <h3 style="margin-top: 0;">Quickstart Guide</h3>
+              <p style="color: var(--muted);">Create your first bucket, upload objects, and generate access keys in 5 minutes.</p>
+              <a href="/docs/getting-started" style="color: var(--primary); text-decoration: none; font-weight: 500;">Read guide →</a>
+            </div>
+
+            <h2 style="font-size: 24px;">API Reference</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+              <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
+                <div style="font-size: 20px; margin-bottom: 10px;">📦</div>
+                <h4 style="margin: 0 0 8px 0;">Buckets</h4>
+                <p style="color: var(--muted); font-size: 14px;">Create, list, delete</p>
+              </div>
+              <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
+                <div style="font-size: 20px; margin-bottom: 10px;">📄</div>
+                <h4 style="margin: 0 0 8px 0;">Objects</h4>
+                <p style="color: var(--muted); font-size: 14px;">Upload, download, copy</p>
+              </div>
+              <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
+                <div style="font-size: 20px; margin-bottom: 10px;">🔐</div>
+                <h4 style="margin: 0 0 8px 0;">Presigned URLs</h4>
+                <p style="color: var(--muted); font-size: 14px;">Generate temporary links</p>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px;">
+              <h3 style="margin-top: 0;">SDKs & Tools</h3>
+              <ul style="list-style: none; padding: 0;">
+                <li style="padding: 10px 0; border-bottom: 1px solid var(--border);">Python SDK</li>
+                <li style="padding: 10px 0; border-bottom: 1px solid var(--border);">Node.js SDK</li>
+                <li style="padding: 10px 0; border-bottom: 1px solid var(--border);">Java SDK</li>
+                <li style="padding: 10px 0; border-bottom: 1px solid var(--border);">AWS S3 Compatible</li>
+                <li style="padding: 10px 0;">CLI Tool</li>
+              </ul>
+            </div>
+
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-top: 30px;">
+              <h3 style="margin-top: 0;">Need help?</h3>
+              <p style="color: var(--muted);">Our support team is available 24/7.</p>
+              <a href="/support" style="display: inline-block; background: var(--primary); color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; margin-top: 10px;">Contact Support</a>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    `;
+
+  } else if (page.path === '/about') {
+    pageTitle = "About";
+    pageDescription = `Learn more about ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 50px; align-items: center; margin-bottom: 60px;">
+          <div>
+            <h2 style="font-size: 32px; margin-top: 0;">Our mission</h2>
+            <p style="font-size: 18px; color: var(--muted); line-height: 1.6;">Make enterprise-grade object storage accessible to every business, from startups to global enterprises.</p>
+          </div>
+          <div style="text-align: center;">
+            <div style="font-size: 80px;">☁️</div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 60px;">
+          <div style="text-align: center;">
+            <div style="font-size: 36px; font-weight: bold; color: var(--primary);">2020</div>
+            <div style="color: var(--muted);">Founded</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="font-size: 36px; font-weight: bold; color: var(--primary);">50+</div>
+            <div style="color: var(--muted);">Team members</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="font-size: 36px; font-weight: bold; color: var(--primary);">5,000+</div>
+            <div style="color: var(--muted);">Customers</div>
+          </div>
+        </div>
+
+        <div style="background: #f8fafc; border-radius: 16px; padding: 40px;">
+          <h3 style="font-size: 24px; margin-top: 0; text-align: center;">Trusted by innovative companies</h3>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; margin-top: 40px; opacity: 0.7;">
+            <div style="text-align: center; font-size: 20px; font-weight: 500;">Acme Corp</div>
+            <div style="text-align: center; font-size: 20px; font-weight: 500;">Globex</div>
+            <div style="text-align: center; font-size: 20px; font-weight: 500;">Initech</div>
+            <div style="text-align: center; font-size: 20px; font-weight: 500;">Umbrella</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+  } else if (page.path === '/contact') {
+    pageTitle = "Contact";
+    pageDescription = "Reach sales and support";
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 50px;">
+
+          <div>
+            <h2 style="font-size: 28px; margin-top: 0;">Get in touch</h2>
+            <p style="color: var(--muted); font-size: 18px; margin-bottom: 30px;">Questions? Our team is here to help.</p>
+
+            <div style="margin-bottom: 30px;">
+              <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
+                <div style="background: var(--primary-light); color: var(--primary); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">📧</div>
+                <div>
+                  <div style="font-weight: 600;">Email</div>
+                  <div style="color: var(--muted);">sales@cloudvault.com</div>
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
+                <div style="background: var(--primary-light); color: var(--primary); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">💬</div>
+                <div>
+                  <div style="font-weight: 600;">Live chat</div>
+                  <div style="color: var(--muted);">Available 24/7</div>
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 15px;">
+                <div style="background: var(--primary-light); color: var(--primary); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">📞</div>
+                <div>
+                  <div style="font-weight: 600;">Phone</div>
+                  <div style="color: var(--muted);">+1 (888) 555-0123</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="background: #f8fafc; border-radius: 16px; padding: 32px;">
+            <h3 style="margin-top: 0;">Send us a message</h3>
+            <div style="display: grid; gap: 20px;">
+              <input type="text" placeholder="Name" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 16px; width: 100%;" disabled value="Demo contact form">
+              <input type="email" placeholder="Email" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 16px; width: 100%;" disabled>
+              <textarea placeholder="How can we help?" rows="4" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 16px; width: 100%;" disabled></textarea>
+              <div style="background: var(--primary); color: white; padding: 12px; border-radius: 8px; text-align: center; opacity: 0.7;">Send Message (Demo)</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    `;
+
+  } else if (page.path === '/status') {
+    pageTitle = "System Status";
+    pageDescription = "Real-time operational status";
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+        <div style="background: #f0f9f0; border: 1px solid #86d986; border-radius: 12px; padding: 24px; display: flex; align-items: center; gap: 16px; margin-bottom: 40px;">
+          <div style="background: #4caf50; width: 12px; height: 12px; border-radius: 50%;"></div>
+          <div style="font-weight: 600;">All systems operational</div>
+          <div style="color: var(--muted); margin-left: auto;">Last updated: ${new Date().toLocaleString()}</div>
+        </div>
+
+        <div style="display: grid; gap: 16px;">
+          <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 600; margin-bottom: 4px;">API</div>
+              <div style="color: var(--muted); font-size: 14px;">US East, US West, EU, Asia</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 20px;">
+              <div style="color: #4caf50; font-weight: 500;">Operational</div>
+              <div style="color: var(--muted);">99.97% uptime</div>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 600; margin-bottom: 4px;">Storage</div>
+              <div style="color: var(--muted); font-size: 14px;">S3-compatible object storage</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 20px;">
+              <div style="color: #ff9800; font-weight: 500;">Degraded</div>
+              <div style="color: var(--muted);">EU region</div>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 600; margin-bottom: 4px;">CDN</div>
+              <div style="color: var(--muted); font-size: 14px;">Global edge network</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 20px;">
+              <div style="color: #4caf50; font-weight: 500;">Operational</div>
+              <div style="color: var(--muted);">200+ edge locations</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
   } else if (page.path.includes('/docs')) {
     pageTitle = "Documentation";
     pageDescription = `Technical documentation for ${persona.name}`;
@@ -3620,7 +3874,7 @@ function renderEnhancedPublicPage(req, page) {
           </div>
         `).join('')}
       </div>
-    ` : page.path === '/pricing' ? `
+    ` : pageContent ? `
       <div class="page-content">
         <h1>${pageTitle}</h1>
         <p style="color: var(--muted); font-size: 18px; margin-bottom: 32px;">${pageDescription}</p>
