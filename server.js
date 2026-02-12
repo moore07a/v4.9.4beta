@@ -3539,14 +3539,6 @@ function renderEnhancedPublicPage(req, page) {
 
             <div style="margin-bottom: 30px;">
               <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
-                <div style="background: var(--primary-light); color: var(--primary); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">📧</div>
-                <div>
-                  <div style="font-weight: 600;">Email</div>
-                  <div style="color: var(--muted);">sales@cloudvault.com</div>
-                </div>
-              </div>
-
-              <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
                 <div style="background: var(--primary-light); color: var(--primary); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">💬</div>
                 <div>
                   <div style="font-weight: 600;">Live chat</div>
