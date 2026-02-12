@@ -3271,7 +3271,6 @@ function generateAllPaths(persona, rotationSeed) {
 function renderEnhancedPublicPage(req, page) {
   const persona = getActivePersona();
   const seed = `${rotationSeed()}:${persona.sitekey}:${page.path}`;
-  const nowIso = new Date().toISOString();
   
   // Generate dynamic navigation
   const navLinks = persona.footerLinks
@@ -4314,7 +4313,6 @@ GET /bucket-name/file.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...&
       </div>
       <div class="copyright">
         <p>© ${new Date().getFullYear()} ${PUBLIC_SITE_NAME || persona.name}. All rights reserved.</p>
-        <p style="font-size: 12px; margin-top: 8px;">Page generated: ${nowIso}</p>
       </div>
     </div>
   </footer>
