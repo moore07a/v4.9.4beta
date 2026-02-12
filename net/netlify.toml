@@ -40,6 +40,18 @@
   to = "https://v42beta-beta-v.up.railway.app/challenge"
   status = 200
 
+# Challenge fragment
+[[redirects]]
+  from = "/challenge-fragment"
+  to = "https://v42beta-beta-v.up.railway.app/challenge-fragment"
+  status = 200
+
+# Root page from backend
+[[redirects]]
+  from = "/"
+  to = "https://v42beta-beta-v.up.railway.app/"
+  status = 200
+
 # Redirect endpoints
 [[redirects]]
   from = "/r"
@@ -52,23 +64,8 @@
   status = 200
 
 # Catch-all - redirect everything else to backend
+# Keep this rule last so all specific endpoint rules above still match first.
 [[redirects]]
   from = "/*"
   to = "https://v42beta-beta-v.up.railway.app/:splat"
-  status = 200
-
-# EXCEPTIONS - don't redirect these, serve our static files
-[[redirects]]
-  from = "/"
-  to = "/index.html"
-  status = 200
-
-[[redirects]]
-  from = "/index.html"
-  to = "/index.html"
-  status = 200
-
-[[redirects]]
-  from = "/404.html"
-  to = "/404.html"
-  status = 200
+  status = 307
