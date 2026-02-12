@@ -2992,7 +2992,7 @@ app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 // ================== ENHANCED PUBLIC CONTENT SURFACE ==================
 const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "1") === "1";
 const PUBLIC_SITE_PERSONA = (process.env.PUBLIC_SITE_PERSONA || "rotating").toLowerCase();
-const PUBLIC_SITE_NAME = (process.env.PUBLIC_SITE_NAME || "").trim() || getActivePersona().name; // ✅ FALLBACK
+const PUBLIC_SITE_NAME_OVERRIDE = (process.env.PUBLIC_SITE_NAME || "").trim();
 const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL || "").trim();
 const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
@@ -3191,6 +3191,8 @@ function getActivePersona() {
   
   return PERSONAS[personaKey];
 }
+
+const PUBLIC_SITE_NAME = PUBLIC_SITE_NAME_OVERRIDE || getActivePersona().name;
 
 // ================== GENERATE DUMMY PATHS ==================
 function generateAllPaths(persona, rotationSeed) {
