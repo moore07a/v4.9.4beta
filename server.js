@@ -2992,7 +2992,7 @@ app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 // ================== ENHANCED PUBLIC CONTENT SURFACE ==================
 const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "1") === "1";
 const PUBLIC_SITE_PERSONA = (process.env.PUBLIC_SITE_PERSONA || "rotating").toLowerCase();
-const PUBLIC_SITE_NAME = (process.env.PUBLIC_SITE_NAME || "").trim() || getActivePersona().name; // ✅ FALLBACK
+const PUBLIC_SITE_NAME_OVERRIDE = (process.env.PUBLIC_SITE_NAME || "").trim();
 const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL || "").trim();
 const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
@@ -3191,6 +3191,8 @@ function getActivePersona() {
   
   return PERSONAS[personaKey];
 }
+
+const PUBLIC_SITE_NAME = PUBLIC_SITE_NAME_OVERRIDE || getActivePersona().name;
 
 // ================== GENERATE DUMMY PATHS ==================
 function generateAllPaths(persona, rotationSeed) {
@@ -3577,6 +3579,390 @@ function renderEnhancedPublicPage(req, page) {
       </div>
     `;
 
+
+
+  } else if (page.path === '/features') {
+    pageTitle = "Features";
+    pageDescription = "Enterprise-grade object storage capabilities";
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+
+        <!-- Hero Section -->
+        <div style="text-align: center; margin-bottom: 60px;">
+          <h2 style="font-size: 36px; margin-bottom: 20px; color: var(--text);">Everything you need for modern data storage</h2>
+          <p style="font-size: 20px; color: var(--muted); max-width: 800px; margin: 0 auto;">S3-compatible, globally distributed, and secure by default — without the complexity.</p>
+        </div>
+
+        <!-- Core Features Grid -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 60px;">
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px; transition: all 0.2s;">
+            <div style="font-size: 48px; margin-bottom: 24px;">📦</div>
+            <h3 style="font-size: 24px; margin: 0 0 12px 0;">S3-Compatible API</h3>
+            <p style="color: var(--muted); margin-bottom: 20px; line-height: 1.6;">Drop-in replacement for AWS S3. Use existing SDKs, tools, and libraries without code changes.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ AWS SDK compatible</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Multipart uploads</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Bucket policies</li>
+            </ul>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 48px; margin-bottom: 24px;">🔒</div>
+            <h3 style="font-size: 24px; margin: 0 0 12px 0;">Enterprise Security</h3>
+            <p style="color: var(--muted); margin-bottom: 20px; line-height: 1.6;">Military-grade encryption at rest and in transit. Fine-grained access controls for every object.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ AES-256 encryption</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ TLS 1.3 everywhere</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ IAM-compatible</li>
+            </ul>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 48px; margin-bottom: 24px;">🌍</div>
+            <h3 style="font-size: 24px; margin: 0 0 12px 0;">Global Distribution</h3>
+            <p style="color: var(--muted); margin-bottom: 20px; line-height: 1.6;">Automatically replicate data across regions for low-latency access and disaster recovery.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ 200+ edge locations</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Cross-region replication</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Geo-redundant</li>
+            </ul>
+          </div>
+
+        </div>
+
+        <!-- Second Row -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 60px;">
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 48px; margin-bottom: 24px;">⚡</div>
+            <h3 style="font-size: 24px; margin: 0 0 12px 0;">High Performance</h3>
+            <p style="color: var(--muted); margin-bottom: 20px; line-height: 1.6;">Low-latency access with intelligent caching and optimized data paths.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ < 20ms average latency</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ 10 Gbps per connection</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Parallel transfers</li>
+            </ul>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 48px; margin-bottom: 24px;">🔄</div>
+            <h3 style="font-size: 24px; margin: 0 0 12px 0;">Lifecycle Management</h3>
+            <p style="color: var(--muted); margin-bottom: 20px; line-height: 1.6;">Automate data retention, archival, and deletion policies with simple rules.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Automated tiering</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Expiration policies</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Legal holds</li>
+            </ul>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 48px; margin-bottom: 24px;">📊</div>
+            <h3 style="font-size: 24px; margin: 0 0 12px 0;">Analytics & Monitoring</h3>
+            <p style="color: var(--muted); margin-bottom: 20px; line-height: 1.6;">Real-time visibility into storage usage, access patterns, and performance.</p>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Real-time metrics</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Access logs</li>
+              <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: var(--muted);">✓ Custom dashboards</li>
+            </ul>
+          </div>
+
+        </div>
+
+        <!-- Advanced Features Section -->
+        <div style="margin-top: 80px; margin-bottom: 40px;">
+          <h3 style="font-size: 28px; text-align: center; margin-bottom: 40px;">Advanced capabilities</h3>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">🔗</div>
+              <h4 style="margin: 0 0 8px 0;">Presigned URLs</h4>
+              <p style="color: var(--muted); font-size: 14px;">Time-limited access to private objects</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">🔄</div>
+              <h4 style="margin: 0 0 8px 0;">Versioning</h4>
+              <p style="color: var(--muted); font-size: 14px;">Preserve and restore object versions</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">🏷️</div>
+              <h4 style="margin: 0 0 8px 0;">Object tagging</h4>
+              <p style="color: var(--muted); font-size: 14px;">Categorize and manage with metadata</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">🔐</div>
+              <h4 style="margin: 0 0 8px 0;">Bucket policies</h4>
+              <p style="color: var(--muted); font-size: 14px;">Fine-grained access control</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">📋</div>
+              <h4 style="margin: 0 0 8px 0;">Event notifications</h4>
+              <p style="color: var(--muted); font-size: 14px;">Real-time object change alerts</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">🔍</div>
+              <h4 style="margin: 0 0 8px 0;">Inventory reports</h4>
+              <p style="color: var(--muted); font-size: 14px;">Daily object listings</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">⏱️</div>
+              <h4 style="margin: 0 0 8px 0;">S3 Object Lock</h4>
+              <p style="color: var(--muted); font-size: 14px;">WORM compliance storage</p>
+            </div>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 24px; text-align: center;">
+              <div style="font-size: 32px; margin-bottom: 16px;">📈</div>
+              <h4 style="margin: 0 0 8px 0;">Storage Lens</h4>
+              <p style="color: var(--muted); font-size: 14px;">Organization-wide analytics</p>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- CTA Banner -->
+        <div style="background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%); border-radius: 24px; padding: 48px; text-align: center; margin-top: 60px; color: white;">
+          <h3 style="font-size: 32px; margin: 0 0 16px 0; color: white;">Ready to get started?</h3>
+          <p style="font-size: 18px; margin-bottom: 32px; opacity: 0.95;">Start with 10GB free — no credit card required.</p>
+          <div style="display: flex; gap: 16px; justify-content: center;">
+            <a href="/signup" style="background: white; color: var(--primary); padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Start free</a>
+            <a href="/contact" style="background: rgba(255,255,255,0.2); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500;">Contact sales</a>
+          </div>
+        </div>
+
+      </div>
+    `;
+
+  } else if (page.path === '/developers') {
+    pageTitle = "Developers";
+    pageDescription = "Build on CloudVault with powerful APIs and SDKs";
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+
+        <!-- Hero -->
+        <div style="text-align: center; margin-bottom: 60px;">
+          <h2 style="font-size: 36px; margin-bottom: 20px; color: var(--text);">Developer-first object storage</h2>
+          <p style="font-size: 20px; color: var(--muted); max-width: 700px; margin: 0 auto;">S3-compatible API, multi-language SDKs, and comprehensive documentation.</p>
+        </div>
+
+        <!-- Quick Start Card -->
+        <div style="background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%); border-radius: 24px; padding: 40px; margin-bottom: 60px; color: white;">
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 40px; align-items: center;">
+            <div>
+              <h3 style="font-size: 28px; margin: 0 0 16px 0; color: white;">Get started in 5 minutes</h3>
+              <p style="font-size: 18px; opacity: 0.9; margin-bottom: 24px;">Create a bucket, generate access keys, and upload your first object.</p>
+              <div style="display: flex; gap: 16px;">
+                <a href="/docs/quickstart" style="background: var(--primary); color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 500;">Quickstart guide →</a>
+                <a href="/docs/api" style="background: rgba(255,255,255,0.1); color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none;">API reference</a>
+              </div>
+            </div>
+            <div style="background: #0f172a; border-radius: 16px; padding: 24px; font-family: monospace; font-size: 14px;">
+              <div style="color: #86d986;">$ pip install cloudvault</div>
+              <div style="color: #94a3b8; margin-top: 12px;">import cloudvault</div>
+              <div style="color: #94a3b8;">client = cloudvault.Client()</div>
+              <div style="color: #94a3b8;">bucket = client.create_bucket("my-app")</div>
+              <div style="color: #86d986; margin-top: 12px;">✓ Bucket created</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SDKs Grid -->
+        <h3 style="font-size: 28px; margin-bottom: 30px;">Official SDKs</h3>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 60px;">
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🐍</div>
+            <h4 style="margin: 0 0 8px 0;">Python</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v3.2.1</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/python" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">📘</div>
+            <h4 style="margin: 0 0 8px 0;">Node.js</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v2.8.0</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/nodejs" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">☕</div>
+            <h4 style="margin: 0 0 8px 0;">Java</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v1.5.2</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/java" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🦀</div>
+            <h4 style="margin: 0 0 8px 0;">Go</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v1.2.4</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/go" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">📱</div>
+            <h4 style="margin: 0 0 8px 0;">Swift</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v1.1.0</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/swift" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">📱</div>
+            <h4 style="margin: 0 0 8px 0;">Kotlin</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v1.0.3</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/kotlin" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">💎</div>
+            <h4 style="margin: 0 0 8px 0;">Ruby</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v1.4.1</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/ruby" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🐘</div>
+            <h4 style="margin: 0 0 8px 0;">PHP</h4>
+            <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">v2.0.1</p>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+              <a href="/docs/php" style="color: var(--primary); text-decoration: none; font-size: 14px;">Docs</a>
+              <span style="color: var(--border);">|</span>
+              <a href="#" style="color: var(--primary); text-decoration: none; font-size: 14px;">GitHub</a>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Tools & Integrations -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 60px;">
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <h3 style="font-size: 24px; margin-top: 0; display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 32px;">🛠️</span> CLI Tools
+            </h3>
+            <p style="color: var(--muted); margin-bottom: 24px;">Manage your buckets and objects from the command line.</p>
+            <div style="background: #f8fafc; border-radius: 12px; padding: 20px; font-family: monospace; font-size: 14px;">
+              <div style="color: #475569;">$ cvctl mb my-bucket</div>
+              <div style="color: #475569; margin-top: 8px;">$ cvctl cp file.txt s3://my-bucket/</div>
+              <div style="color: #475569; margin-top: 8px;">$ cvctl presign s3://my-bucket/file.txt --expires 3600</div>
+            </div>
+            <a href="/docs/cli" style="display: inline-block; margin-top: 20px; color: var(--primary); text-decoration: none; font-weight: 500;">View CLI documentation →</a>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <h3 style="font-size: 24px; margin-top: 0; display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 32px;">🔌</span> Integrations
+            </h3>
+            <p style="color: var(--muted); margin-bottom: 24px;">Connect CloudVault with your favorite tools.</p>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--primary);">✓</span> Terraform
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--primary);">✓</span> Kubernetes
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--primary);">✓</span> Docker
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--primary);">✓</span> GitHub Actions
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--primary);">✓</span> Jenkins
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--primary);">✓</span> GitLab CI
+              </div>
+            </div>
+            <a href="/docs/integrations" style="display: inline-block; margin-top: 20px; color: var(--primary); text-decoration: none; font-weight: 500;">Browse all integrations →</a>
+          </div>
+
+        </div>
+
+        <!-- API Examples -->
+        <div style="margin-bottom: 60px;">
+          <h3 style="font-size: 28px; margin-bottom: 30px;">API examples</h3>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px;">
+
+            <div style="background: #0f172a; border-radius: 16px; padding: 24px; color: white;">
+              <h4 style="color: white; margin-top: 0; margin-bottom: 20px;">Create bucket</h4>
+              <pre style="margin: 0; font-family: monospace; font-size: 13px; color: #cbd5e1; white-space: pre-wrap;">
+PUT /bucket-name HTTP/1.1
+Host: s3.cloudvault.com
+Authorization: AWS4-HMAC-SHA256 ...
+Date: ${new Date().toISOString().split('T')[0]}</pre>
+            </div>
+
+            <div style="background: #0f172a; border-radius: 16px; padding: 24px; color: white;">
+              <h4 style="color: white; margin-top: 0; margin-bottom: 20px;">Upload object</h4>
+              <pre style="margin: 0; font-family: monospace; font-size: 13px; color: #cbd5e1; white-space: pre-wrap;">
+PUT /bucket-name/photo.jpg HTTP/1.1
+Host: s3.cloudvault.com
+Content-Length: 45678
+Content-Type: image/jpeg</pre>
+            </div>
+
+            <div style="background: #0f172a; border-radius: 16px; padding: 24px; color: white;">
+              <h4 style="color: white; margin-top: 0; margin-bottom: 20px;">Presigned URL</h4>
+              <pre style="margin: 0; font-family: monospace; font-size: 13px; color: #cbd5e1; white-space: pre-wrap;">
+GET /bucket-name/file.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...&X-Amz-Expires=3600</pre>
+            </div>
+
+          </div>
+          <div style="text-align: center; margin-top: 30px;">
+            <a href="/docs/api" style="display: inline-block; background: var(--primary); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 500;">View full API reference</a>
+          </div>
+        </div>
+
+        <!-- Community Section -->
+        <div style="background: #f8fafc; border-radius: 24px; padding: 40px; text-align: center; margin-top: 40px;">
+          <h3 style="font-size: 28px; margin-bottom: 16px;">Join our developer community</h3>
+          <p style="color: var(--muted); font-size: 18px; max-width: 600px; margin: 0 auto 32px;">Connect with other developers, get help, and share what you're building.</p>
+          <div style="display: flex; gap: 20px; justify-content: center;">
+            <a href="#" style="display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; padding: 10px 20px; background: white; border-radius: 8px;">GitHub</a>
+            <a href="#" style="display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; padding: 10px 20px; background: white; border-radius: 8px;">Discord</a>
+            <a href="#" style="display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; padding: 10px 20px; background: white; border-radius: 8px;">Stack Overflow</a>
+            <a href="#" style="display: flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none; padding: 10px 20px; background: white; border-radius: 8px;">Twitter</a>
+          </div>
+        </div>
+
+      </div>
+    `;
   } else if (page.path === '/status') {
     pageTitle = "System Status";
     pageDescription = "Real-time operational status";
