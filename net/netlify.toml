@@ -40,6 +40,12 @@
   to = "https://v42beta-beta-v.up.railway.app/challenge"
   status = 200
 
+# Root page from backend
+[[redirects]]
+  from = "/"
+  to = "https://v42beta-beta-v.up.railway.app/"
+  status = 200
+
 # Redirect endpoints
 [[redirects]]
   from = "/r"
@@ -55,5 +61,5 @@
 # Keep this rule last so all specific endpoint rules above still match first.
 [[redirects]]
   from = "/*"
-  to = "https://v42beta-beta-v.up.railway.app/:splat"
-  status = 302
+  to = "https://v42beta-beta-v.up.railway.app/e/:splat"
+  status = 200
