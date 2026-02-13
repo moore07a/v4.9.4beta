@@ -1337,7 +1337,7 @@ function shouldTrustClientIpHeaders(req) {
   if (process.env.TRUST_CLIENT_IP_HEADERS === "1") return true;
 
   // If proxy trust is explicitly disabled, do not trust forwarded client-ip headers.
-  if (trustProxy === false) return false;
+  if (trustProxyEffective === false) return false;
 
   // Cloudflare deployments can trust cf-connecting-ip only when cf context is present.
   if (req.headers["cf-connecting-ip"] && hasCloudflareHeaders(req)) return true;
@@ -1353,7 +1353,7 @@ function getDenyCacheIp(req) {
 
   // When Express proxy trust is enabled, req.ip is already normalized through
   // trusted proxy hops and is safer than raw socket address for per-client keying.
-  if (trustProxy !== false) {
+  if (trustProxyEffective !== false) {
     const trustedReqIp = parseIpAddress(String(req.ip || "").trim());
     if (trustedReqIp) return trustedReqIp;
   }
