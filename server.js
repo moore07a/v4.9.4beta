@@ -4004,6 +4004,320 @@ GET /bucket-name/file.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...&
 
       </div>
     `;
+  } else if (page.path === '/network') {
+    pageTitle = "Global Edge Network";
+    pageDescription = "200+ locations. 100+ Tbps capacity. 99.99% availability.";
+
+    pageContent = `
+      <div style="margin-top: 20px;">
+
+        <!-- Hero Section -->
+        <div style="text-align: center; margin-bottom: 60px;">
+          <h2 style="font-size: 42px; margin-bottom: 20px; color: var(--text);">The world's most connected edge network</h2>
+          <p style="font-size: 20px; color: var(--muted); max-width: 800px; margin: 0 auto;">Deliver content at lightning speed with our globally distributed edge infrastructure.</p>
+        </div>
+
+        <!-- Global Stats -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; margin-bottom: 60px;">
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px; text-align: center;">
+            <div style="font-size: 48px; font-weight: 700; color: var(--primary); margin-bottom: 8px;">200+</div>
+            <div style="font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">Edge Locations</div>
+          </div>
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px; text-align: center;">
+            <div style="font-size: 48px; font-weight: 700; color: var(--primary); margin-bottom: 8px;">100+</div>
+            <div style="font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">Tbps Capacity</div>
+          </div>
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px; text-align: center;">
+            <div style="font-size: 48px; font-weight: 700; color: var(--primary); margin-bottom: 8px;">99.99%</div>
+            <div style="font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">Network Availability</div>
+          </div>
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px; text-align: center;">
+            <div style="font-size: 48px; font-weight: 700; color: var(--primary); margin-bottom: 8px;">&lt; 20ms</div>
+            <div style="font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px;">Global Latency</div>
+          </div>
+        </div>
+
+        <!-- World Map Visualization -->
+        <div style="background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%); border-radius: 32px; padding: 60px 40px; margin-bottom: 60px; color: white; position: relative; overflow: hidden;">
+
+          <!-- Decorative grid lines -->
+          <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; opacity: 0.1; background-image: radial-gradient(circle at 20% 30%, white 1px, transparent 1px), radial-gradient(circle at 80% 70%, white 1px, transparent 1px); background-size: 50px 50px;"></div>
+
+          <div style="position: relative; z-index: 2;">
+            <h3 style="font-size: 28px; margin: 0 0 40px 0; color: white; text-align: center;">Global edge presence</h3>
+
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; margin-bottom: 40px;">
+
+              <div>
+                <h4 style="color: white; margin-bottom: 20px; font-size: 18px;">🌎 North America</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Ashburn, VA</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Dallas, TX</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Los Angeles, CA</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Chicago, IL</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Toronto, ON</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">+12 more</li>
+                </ul>
+              </div>
+
+              <div>
+                <h4 style="color: white; margin-bottom: 20px; font-size: 18px;">🌍 Europe</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• London, UK</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Frankfurt, DE</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Paris, FR</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Amsterdam, NL</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Stockholm, SE</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">+8 more</li>
+                </ul>
+              </div>
+
+              <div>
+                <h4 style="color: white; margin-bottom: 20px; font-size: 18px;">🌏 Asia Pacific</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Tokyo, JP</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Singapore, SG</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Sydney, AU</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Mumbai, IN</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Seoul, KR</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">+6 more</li>
+                </ul>
+              </div>
+
+              <div>
+                <h4 style="color: white; margin-bottom: 20px; font-size: 18px;">🌎 South America & More</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• São Paulo, BR</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Buenos Aires, AR</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Santiago, CL</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Dubai, AE</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">• Johannesburg, ZA</li>
+                  <li style="padding: 8px 0; display: flex; align-items: center; gap: 10px; color: #cbd5e1;">+4 more</li>
+                </ul>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- Network Features Grid -->
+        <h3 style="font-size: 28px; margin-bottom: 30px;">Why choose EdgeFlow network</h3>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 60px;">
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">⚡</div>
+            <h4 style="font-size: 20px; margin: 0 0 12px 0;">Intelligent routing</h4>
+            <p style="color: var(--muted); line-height: 1.6;">Real-time traffic optimization using Anycast and BGP anycast. Automatically routes users to the fastest available edge location.</p>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🛡️</div>
+            <h4 style="font-size: 20px; margin: 0 0 12px 0;">DDoS mitigation</h4>
+            <p style="color: var(--muted); line-height: 1.6;">Always-on protection against layer 3/4/7 attacks. 10 Tbps+ mitigation capacity distributed globally.</p>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🚀</div>
+            <h4 style="font-size: 20px; margin: 0 0 12px 0;">Instant purge</h4>
+            <p style="color: var(--muted); line-height: 1.6;">Global cache purging in under 5 seconds. Update content instantly across all 200+ edge locations.</p>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🔒</div>
+            <h4 style="font-size: 20px; margin: 0 0 12px 0;">SSL/TLS everywhere</h4>
+            <p style="color: var(--muted); line-height: 1.6;">Automatic HTTPS with custom certificates. TLS 1.3 enforced across the entire edge network.</p>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">📊</div>
+            <h4 style="font-size: 20px; margin: 0 0 12px 0;">Real-time analytics</h4>
+            <p style="color: var(--muted); line-height: 1.6;">Live traffic visualization, cache hit ratios, bandwidth usage, and error rates per edge location.</p>
+          </div>
+
+          <div style="background: white; border: 1px solid var(--border); border-radius: 20px; padding: 32px;">
+            <div style="font-size: 40px; margin-bottom: 20px;">🌐</div>
+            <h4 style="font-size: 20px; margin: 0 0 12px 0;">IPv6 ready</h4>
+            <p style="color: var(--muted); line-height: 1.6;">Dual-stack support at all edge locations. Native IPv6 connectivity with zero configuration.</p>
+          </div>
+
+        </div>
+
+        <!-- Performance Comparison -->
+        <div style="background: #f8fafc; border-radius: 24px; padding: 40px; margin-bottom: 60px;">
+          <h3 style="font-size: 24px; margin-top: 0; margin-bottom: 30px;">Global performance comparison</h3>
+
+          <div style="display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 20px; align-items: center; margin-bottom: 20px; padding: 12px; background: white; border-radius: 12px;">
+            <div style="font-weight: 600;">Region</div>
+            <div style="font-weight: 600;">EdgeFlow latency</div>
+            <div style="font-weight: 600;">Traditional CDN</div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 20px; align-items: center; margin-bottom: 12px; padding: 12px;">
+            <div>North America</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-weight: 600; color: var(--primary);">14ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: var(--primary); width: 30%; height: 8px;"></div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span>28ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: #94a3b8; width: 60%; height: 8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 20px; align-items: center; margin-bottom: 12px; padding: 12px;">
+            <div>Europe</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-weight: 600; color: var(--primary);">18ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: var(--primary); width: 35%; height: 8px;"></div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span>32ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: #94a3b8; width: 65%; height: 8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 20px; align-items: center; margin-bottom: 12px; padding: 12px;">
+            <div>Asia Pacific</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-weight: 600; color: var(--primary);">22ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: var(--primary); width: 45%; height: 8px;"></div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span>45ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: #94a3b8; width: 90%; height: 8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 20px; align-items: center; padding: 12px;">
+            <div>South America</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-weight: 600; color: var(--primary);">35ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: var(--primary); width: 70%; height: 8px;"></div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span>58ms</span>
+              <div style="background: #e2e8f0; height: 8px; width: 100px; border-radius: 4px; overflow: hidden;">
+                <div style="background: #94a3b8; width: 100%; height: 8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 30px; padding: 20px; background: white; border-radius: 12px; text-align: center;">
+            <p style="margin: 0; color: var(--muted);">EdgeFlow delivers content <strong style="color: var(--primary);">2.1x faster</strong> on average compared to traditional CDNs</p>
+          </div>
+        </div>
+
+        <!-- Edge Locations Map (Text-based) -->
+        <div style="margin-bottom: 60px;">
+          <h3 style="font-size: 24px; margin-bottom: 30px;">Recently added edge locations</h3>
+          <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px;">
+
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center;">
+              <div style="font-size: 24px; margin-bottom: 8px;">🇦🇪</div>
+              <div style="font-weight: 600;">Dubai</div>
+              <div style="color: var(--muted); font-size: 14px;">UAE</div>
+              <div style="margin-top: 12px; background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 20px; font-size: 12px; display: inline-block;">Live</div>
+            </div>
+
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center;">
+              <div style="font-size: 24px; margin-bottom: 8px;">🇿🇦</div>
+              <div style="font-weight: 600;">Johannesburg</div>
+              <div style="color: var(--muted); font-size: 14px;">South Africa</div>
+              <div style="margin-top: 12px; background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 20px; font-size: 12px; display: inline-block;">Live</div>
+            </div>
+
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center;">
+              <div style="font-size: 24px; margin-bottom: 8px;">🇮🇩</div>
+              <div style="font-weight: 600;">Jakarta</div>
+              <div style="color: var(--muted); font-size: 14px;">Indonesia</div>
+              <div style="margin-top: 12px; background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 20px; font-size: 12px; display: inline-block;">Live</div>
+            </div>
+
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center;">
+              <div style="font-size: 24px; margin-bottom: 8px;">🇨🇱</div>
+              <div style="font-weight: 600;">Santiago</div>
+              <div style="color: var(--muted); font-size: 14px;">Chile</div>
+              <div style="margin-top: 12px; background: #fef9c3; color: #854d0e; padding: 4px 8px; border-radius: 20px; font-size: 12px; display: inline-block;">Coming soon</div>
+            </div>
+
+            <div style="background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center;">
+              <div style="font-size: 24px; margin-bottom: 8px;">🇳🇬</div>
+              <div style="font-weight: 600;">Lagos</div>
+              <div style="color: var(--muted); font-size: 14px;">Nigeria</div>
+              <div style="margin-top: 12px; background: #fef9c3; color: #854d0e; padding: 4px 8px; border-radius: 20px; font-size: 12px; display: inline-block;">Q2 2026</div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Bandwidth Pricing -->
+        <div style="background: linear-gradient(145deg, var(--primary) 0%, var(--primary-light) 100%); border-radius: 24px; padding: 40px; color: white; margin-bottom: 40px;">
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 40px; align-items: center;">
+            <div>
+              <h3 style="font-size: 28px; margin: 0 0 16px 0; color: white;">Global bandwidth pricing</h3>
+              <p style="font-size: 18px; opacity: 0.95; margin-bottom: 24px;">Simple, transparent pricing across all edge locations. No regional markups.</p>
+              <div style="display: flex; gap: 40px;">
+                <div>
+                  <div style="font-size: 14px; opacity: 0.9;">North America & Europe</div>
+                  <div style="font-size: 32px; font-weight: 700;">$0.08</div>
+                  <div style="font-size: 14px; opacity: 0.9;">per GB</div>
+                </div>
+                <div>
+                  <div style="font-size: 14px; opacity: 0.9;">Asia Pacific</div>
+                  <div style="font-size: 32px; font-weight: 700;">$0.10</div>
+                  <div style="font-size: 14px; opacity: 0.9;">per GB</div>
+                </div>
+                <div>
+                  <div style="font-size: 14px; opacity: 0.9;">South America</div>
+                  <div style="font-size: 32px; font-weight: 700;">$0.12</div>
+                  <div style="font-size: 14px; opacity: 0.9;">per GB</div>
+                </div>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 60px; margin-bottom: 10px;">🌐</div>
+              <div style="font-size: 18px; font-weight: 600;">Volume discounts available</div>
+              <div style="opacity: 0.9;">Contact sales for >50 TB/month</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Trust Signals -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 30px 0; border-top: 1px solid var(--border); margin-top: 20px;">
+          <div style="display: flex; gap: 40px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-size: 24px;">🏆</div>
+              <div style="font-weight: 500;">Gartner Peer Insights</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-size: 24px;">⭐</div>
+              <div style="font-weight: 500;">4.9/5 customer rating</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-size: 24px;">🔒</div>
+              <div style="font-weight: 500;">SOC2 Type II</div>
+            </div>
+          </div>
+          <a href="/contact" style="background: var(--primary); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 500;">Get started</a>
+        </div>
+
+      </div>
+    `;
+
   } else if (page.path === '/status') {
     pageTitle = "System Status";
     pageDescription = "Real-time operational status";
