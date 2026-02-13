@@ -50,6 +50,33 @@ const trustProxy = (() => {
 app.set('trust proxy', trustProxy);
 console.log(`[PROXY] Trust proxy setting: ${trustProxy}`);
 
+// Safety override: prefer explicit/safer proxy trust behavior unless explicitly set.
+function resolveSaferTrustProxySetting() {
+  const raw = String(process.env.TRUST_PROXY_HOPS || '').trim();
+  const mode = String(process.env.TRUST_PROXY_MODE || 'safe').trim().toLowerCase();
+
+  if (raw) {
+    if (raw.toLowerCase() === 'true') return true;
+    if (raw.toLowerCase() === 'false') return false;
+    if (Number.isFinite(+raw) && +raw >= 0) return +raw;
+  }
+
+  // In safe mode, default to explicit single hop on managed platforms, otherwise no trust.
+  if (mode === 'safe') {
+    if (process.env.VERCEL || process.env.NETLIFY || process.env.RENDER || process.env.RAILWAY || process.env.HEROKU) {
+      return 1;
+    }
+    return false;
+  }
+
+  // Legacy behavior compatibility
+  return trustProxy;
+}
+
+const trustProxyEffective = resolveSaferTrustProxySetting();
+app.set('trust proxy', trustProxyEffective);
+console.log(`[PROXY] Effective trust proxy setting: ${trustProxyEffective}`);
+
 const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() === "true";
 
 // ------------ Enhanced Global Security Headers ---------------
@@ -972,11 +999,21 @@ function requireAdmin(req, res, next) {
 
 const EPHEMERAL_TTL_MS = 5 * 60 * 1000;
 const EPHEMERAL_SECRET = process.env.ADMIN_TOKEN || "dev-secret";
+const EPHEMERAL_SECRET_EFFECTIVE = (() => {
+  const explicit = (process.env.EPHEMERAL_SECRET || "").trim();
+  if (explicit) return explicit;
+  if (process.env.ADMIN_TOKEN && process.env.ADMIN_TOKEN.length >= 16) return process.env.ADMIN_TOKEN;
+
+  // Avoid predictable fallback in non-prod; rotate per process when no strong admin token exists.
+  const randomFallback = crypto.randomBytes(32).toString("base64url");
+  console.warn("⚠️ EPHEMERAL_SECRET not provided and ADMIN_TOKEN is weak/missing; using process-random ephemeral secret.");
+  return randomFallback;
+})();
 
 function mintEphemeralToken() {
   const exp = Date.now() + EPHEMERAL_TTL_MS;
   const msg = `sse:${exp}`;
-  const sig = crypto.createHmac('sha256', EPHEMERAL_SECRET).update(msg).digest('base64url');
+  const sig = crypto.createHmac('sha256', EPHEMERAL_SECRET_EFFECTIVE).update(msg).digest('base64url');
   return `ts:${exp}:${sig}`;
 }
 
@@ -986,7 +1023,7 @@ function verifyEphemeralToken(tok) {
   const exp = +m[1], sig = m[2];
   if (Date.now() > exp) return false;
   const msg = `sse:${exp}`;
-  const expect = crypto.createHmac('sha256', EPHEMERAL_SECRET).update(msg).digest('base64url');
+  const expect = crypto.createHmac('sha256', EPHEMERAL_SECRET_EFFECTIVE).update(msg).digest('base64url');
   return sig === expect;
 }
 
@@ -1534,6 +1571,12 @@ if (configValidation.errors.length > 0) {
 if (configValidation.warnings.length > 0) {
   console.warn("⚠️ Configuration warnings:");
   configValidation.warnings.forEach(warn => console.warn(`   ${warn}`));
+}
+
+// Hardening: fail fast in production if ADMIN_TOKEN is weak/missing.
+if (process.env.NODE_ENV === "production" && (!ADMIN_TOKEN || ADMIN_TOKEN.length < 16)) {
+  console.error("❌ ADMIN_TOKEN must be set with at least 16 characters in production.");
+  process.exit(1);
 }
 
 const EXPECT_HOSTNAME_LIST   = (EXPECT_HOSTNAME || "")
@@ -2990,7 +3033,7 @@ app.use(express.json({ limit: "64kb" }));
 app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
 // ================== ENHANCED PUBLIC CONTENT SURFACE ==================
-const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "1") === "1";
+const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "0") === "1";
 const PUBLIC_SITE_PERSONA = (process.env.PUBLIC_SITE_PERSONA || "rotating").toLowerCase();
 const PUBLIC_SITE_NAME_OVERRIDE = (process.env.PUBLIC_SITE_NAME || "").trim();
 const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL || "").trim();
@@ -2998,6 +3041,18 @@ const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim(
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
 const PUBLIC_ENABLE_ANALYTICS = (process.env.PUBLIC_ENABLE_ANALYTICS || "1") === "1";
 const PUBLIC_ENABLE_BACKGROUND = (process.env.PUBLIC_ENABLE_BACKGROUND || "1") === "1";
+
+// Safety gate: disable broad public surface by default unless explicitly enabled.
+function isPublicContentSurfaceEnabled() {
+  const forceEnable = (process.env.PUBLIC_CONTENT_SURFACE_FORCE || "").trim().toLowerCase();
+  if (forceEnable === "1" || forceEnable === "true" || forceEnable === "yes") return true;
+
+  const explicit = (process.env.PUBLIC_CONTENT_SURFACE || "").trim();
+  if (explicit) return PUBLIC_CONTENT_SURFACE;
+
+  // No explicit setting -> safer default off.
+  return false;
+}
 
 // ================== MULTIPLE PERSONAS ==================
 // Each persona is a completely different "cover story"
@@ -4526,7 +4581,13 @@ function startPublicBackgroundTraffic() {
 
 // ================== REGISTER ENHANCED ROUTES ==================
 function registerEnhancedPublicRoutes() {
+  const publicSurfaceEnabled = PUBLIC_CONTENT_SURFACE && isPublicContentSurfaceEnabled();
+  addLog(`[PUBLIC-CONTENT] Effective enabled=${publicSurfaceEnabled} declared=${PUBLIC_CONTENT_SURFACE} force=${String(process.env.PUBLIC_CONTENT_SURFACE_FORCE || '').trim() ? 'set' : 'unset'} explicit=${String(process.env.PUBLIC_CONTENT_SURFACE || '').trim() ? 'set' : 'unset'}`);
   if (!PUBLIC_CONTENT_SURFACE) return;
+  if (!isPublicContentSurfaceEnabled()) {
+    addLog(`[PUBLIC-CONTENT] Disabled by safe default (set PUBLIC_CONTENT_SURFACE=1 or PUBLIC_CONTENT_SURFACE_FORCE=1 to enable)`);
+    return;
+  }
   
   const persona = getActivePersona();
   const allPaths = generateAllPaths(persona, rotationSeed());
