@@ -57,9 +57,8 @@ function resolveSaferTrustProxySetting() {
     return false;
   }
 
-  // Legacy behavior compatibility
-  if (process.env.VERCEL || process.env.NETLIFY || process.env.RENDER) return 1;
-  return true; // Fallback to trusting all
+  // Legacy behavior compatibility: trust all proxies when hops are unset.
+  return true;
 }
 
 const trustProxyEffective = resolveSaferTrustProxySetting();
@@ -6294,6 +6293,7 @@ const HEALTH_HEARTBEAT_MS = Math.max(
 // ================== STARTUP & HEALTH CHECKS ==================
 function publicContentStartupSummaryLines() {
   const publicSurfaceEnabled = isPublicContentSurfaceEnabled();
+  const backgroundTrafficEnabled = PUBLIC_ENABLE_BACKGROUND && PUBLIC_CONTENT_SURFACE;
   const publicForce = String(process.env.PUBLIC_CONTENT_SURFACE_FORCE || '').trim() ? 'set' : 'unset';
   const publicExplicit = String(process.env.PUBLIC_CONTENT_SURFACE || '').trim() ? 'set' : 'unset';
   const lines = [
@@ -6309,7 +6309,11 @@ function publicContentStartupSummaryLines() {
   const allPaths = generateAllPaths(persona, rotationSeed());
   lines.push(`[PUBLIC-CONTENT] Active persona: ${persona.name} (${persona.sitekey})`);
   lines.push(`[PUBLIC-CONTENT] Generated ${allPaths.length} unique paths, rotation=${PUBLIC_ROTATION_MODE}`);
-  lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
+  if (backgroundTrafficEnabled) {
+    lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
+  } else {
+    lines.push(`[PUBLIC-TRAFFIC] Background traffic generator disabled (PUBLIC_ENABLE_BACKGROUND=${PUBLIC_ENABLE_BACKGROUND}, PUBLIC_CONTENT_SURFACE=${PUBLIC_CONTENT_SURFACE})`);
+  }
   return lines;
 }
 
