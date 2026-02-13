@@ -32,34 +32,22 @@ const EMAIL_DISPLAY_MAX_LENGTH = 80;
 const URL_DISPLAY_MAX_LENGTH = 120;
 
 const app = express();
-// More explicit proxy trust configuration
-const trustProxy = (() => {
-  const raw = process.env.TRUST_PROXY_HOPS && process.env.TRUST_PROXY_HOPS.trim();
-  
-  if (raw === undefined || raw === '') return true; // Default: trust all
+function parseTrustProxyValue(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+
   if (raw.toLowerCase() === 'true') return true;
   if (raw.toLowerCase() === 'false') return false;
   if (Number.isFinite(+raw) && +raw >= 0) return +raw;
-  
-  // Platform-specific defaults (these are nice-to-have, not critical)
-  if (process.env.VERCEL || process.env.NETLIFY || process.env.RENDER) return 1;
-  
-  return true; // Fallback to trusting all
-})();
-
-app.set('trust proxy', trustProxy);
-console.log(`[PROXY] Trust proxy setting: ${trustProxy}`);
+  return null;
+}
 
 // Safety override: prefer explicit/safer proxy trust behavior unless explicitly set.
 function resolveSaferTrustProxySetting() {
-  const raw = String(process.env.TRUST_PROXY_HOPS || '').trim();
+  const parsedTrustProxy = parseTrustProxyValue(process.env.TRUST_PROXY_HOPS);
   const mode = String(process.env.TRUST_PROXY_MODE || 'safe').trim().toLowerCase();
 
-  if (raw) {
-    if (raw.toLowerCase() === 'true') return true;
-    if (raw.toLowerCase() === 'false') return false;
-    if (Number.isFinite(+raw) && +raw >= 0) return +raw;
-  }
+  if (parsedTrustProxy !== null) return parsedTrustProxy;
 
   // In safe mode, default to explicit single hop on managed platforms, otherwise no trust.
   if (mode === 'safe') {
@@ -70,7 +58,8 @@ function resolveSaferTrustProxySetting() {
   }
 
   // Legacy behavior compatibility
-  return trustProxy;
+  if (process.env.VERCEL || process.env.NETLIFY || process.env.RENDER) return 1;
+  return true; // Fallback to trusting all
 }
 
 const trustProxyEffective = resolveSaferTrustProxySetting();
