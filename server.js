@@ -1077,15 +1077,6 @@ if (EXPECT_AES_SHA256) {
   }
 }
 
-{
-  const prints = AES_KEYS.map((k,i) => {
-    const sha = crypto.createHash("sha256").update(k).digest("hex");
-    return `#${i} len=${k.length} sha256=${sha.slice(0,10)}…`;
-  }).join(", ");
-  addLog(`[KEY] Loaded ${AES_KEYS.length} AES key(s): ${prints}`);
-  addSpacer();
-}
-
 if (DEBUG_SHOW_KEYS_ON_START) {
   const raw = (process.env.AES_KEYS || process.env.AES_KEY || process.env.AES_KEY_HEX || "").trim();
   console.log("[DEBUG] AES_KEY(S) raw:", raw);
@@ -4885,24 +4876,16 @@ function startPublicBackgroundTraffic() {
   
   // Start after random delay (0-60s)
   setTimeout(generateVisit, Math.random() * 60000);
-  addLog(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${getActivePersona().sitekey})`);
 }
 
 // ================== REGISTER ENHANCED ROUTES ==================
 function registerEnhancedPublicRoutes() {
   const publicSurfaceEnabled = isPublicContentSurfaceEnabled();
-  addLog(`[PUBLIC-CONTENT] Effective enabled=${publicSurfaceEnabled} declared=${PUBLIC_CONTENT_SURFACE} force=${String(process.env.PUBLIC_CONTENT_SURFACE_FORCE || '').trim() ? 'set' : 'unset'} explicit=${String(process.env.PUBLIC_CONTENT_SURFACE || '').trim() ? 'set' : 'unset'}`);
-  if (!publicSurfaceEnabled) {
-    addLog(`[PUBLIC-CONTENT] Disabled by safe default (set PUBLIC_CONTENT_SURFACE=1 or PUBLIC_CONTENT_SURFACE_FORCE=1 to enable)`);
-    return;
-  }
+  if (!publicSurfaceEnabled) return;
   
   const persona = getActivePersona();
   const allPaths = generateAllPaths(persona, rotationSeed());
   const seed = rotationSeed();
-  
-  addLog(`[PUBLIC-CONTENT] Active persona: ${persona.name} (${persona.sitekey})`);
-  addLog(`[PUBLIC-CONTENT] Generated ${allPaths.length} unique paths, rotation=${PUBLIC_ROTATION_MODE}`);
   
   // ===== STATIC PAGES =====
   // Homepage
@@ -6320,9 +6303,36 @@ const HEALTH_HEARTBEAT_MS = Math.max(
 );
 
 // ================== STARTUP & HEALTH CHECKS ==================
+function publicContentStartupSummaryLines() {
+  const publicSurfaceEnabled = isPublicContentSurfaceEnabled();
+  const publicForce = String(process.env.PUBLIC_CONTENT_SURFACE_FORCE || '').trim() ? 'set' : 'unset';
+  const publicExplicit = String(process.env.PUBLIC_CONTENT_SURFACE || '').trim() ? 'set' : 'unset';
+  const lines = [
+    `[PUBLIC-CONTENT] Effective enabled=${publicSurfaceEnabled} declared=${PUBLIC_CONTENT_SURFACE} force=${publicForce} explicit=${publicExplicit}`
+  ];
+
+  if (!publicSurfaceEnabled) {
+    lines.push("[PUBLIC-CONTENT] Disabled by safe default (set PUBLIC_CONTENT_SURFACE=1 or PUBLIC_CONTENT_SURFACE_FORCE=1 to enable)");
+    return lines;
+  }
+
+  const persona = getActivePersona();
+  const allPaths = generateAllPaths(persona, rotationSeed());
+  lines.push(`[PUBLIC-CONTENT] Active persona: ${persona.name} (${persona.sitekey})`);
+  lines.push(`[PUBLIC-CONTENT] Generated ${allPaths.length} unique paths, rotation=${PUBLIC_ROTATION_MODE}`);
+  lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
+  return lines;
+}
+
 function startupSummary() {
+  const keyPrints = AES_KEYS.map((k, i) => {
+    const sha = crypto.createHash("sha256").update(k).digest("hex");
+    return `#${i} len=${k.length} sha256=${sha.slice(0,10)}…`;
+  }).join(", ");
+
   return [
     "🛡️ Security profile",
+    `[KEY] Loaded ${AES_KEYS.length} AES key(s): ${keyPrints}`,
     `  • Time: zone=${zoneLabel()}`,
     `  • Turnstile: enforceAction=${ENFORCE_ACTION} maxAgeSec=${MAX_TOKEN_AGE_SEC} expectHost=${EXPECT_HOSTNAME || "-"}`,
     `  • Turnstile sitekey=${mask(TURNSTILE_SITEKEY)} secret=${mask(TURNSTILE_SECRET)}`,
@@ -6336,7 +6346,8 @@ function startupSummary() {
     `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
     `  • Challenge security: rateLimit=5/5min tokens=10min`,
     `  • Geo fallback active=${Boolean(geoip)}`,
-    `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`
+    `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`,
+    ...publicContentStartupSummaryLines()
   ].join("\n");
 }
 
