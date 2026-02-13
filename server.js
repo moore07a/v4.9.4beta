@@ -309,7 +309,7 @@ function validateRedirectRequest(req, res, next) {
     "/robots.txt", "/turnstile-sitekey", "/__hp.gif",
     "/decrypt-challenge-data", "/challenge-fragment",
     "/about", "/services", "/docs", "/status", "/contact",
-    "/sitemap.xml", "/api/v1/status"
+    "/sitemap.xml", "/sitemap_index.xml", "/api/v1/status"
   ];
 
   if (skipPaths.some(path => req.path.startsWith(path))) {
@@ -5023,6 +5023,12 @@ app.get("/sitemap.xml", (req, res) => {
 </urlset>`);
   
   addLog(`[SITEMAP] Generated ${urlEntries.length} URLs for ${persona.name}`);
+});
+
+// Common alternate sitemap path used by crawlers (e.g. Bing, SEO tools).
+app.get('/sitemap_index.xml', (req, res) => {
+  addLog(`[SITEMAP] Redirecting sitemap_index.xml to sitemap.xml for ${persona.name}`);
+  return res.redirect(301, '/sitemap.xml');
 });
   
   // ===== ROBOTS.TXT =====
