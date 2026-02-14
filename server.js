@@ -2965,8 +2965,9 @@ function weekStamp(d = new Date()) {
 }
 
 function rotationSeed() {
-  if (PUBLIC_ROTATION_MODE === "weekly") return weekStamp();
-  if (PUBLIC_ROTATION_MODE === "fixed") return "fixed";
+  const mode = String(process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
+  if (mode === "weekly") return weekStamp();
+  if (mode === "fixed") return "fixed";
   return dayStamp();
 }
 
@@ -3332,7 +3333,8 @@ function publicContentStartupSummaryLines() {
   const persona = getActivePersona();
   const allPaths = generateAllPaths(persona, rotationSeed());
   lines.push(`[PUBLIC-CONTENT] Active persona: ${persona.name} (${persona.sitekey})`);
-  lines.push(`[PUBLIC-CONTENT] Generated ${allPaths.length} unique paths, rotation=${PUBLIC_ROTATION_MODE}`);
+  const currentRotationMode = String(process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
+  lines.push(`[PUBLIC-CONTENT] Generated ${allPaths.length} unique paths, rotation=${currentRotationMode}`);
   if (backgroundTrafficEnabled) {
     lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
   } else {
