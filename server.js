@@ -990,11 +990,22 @@ const EPHEMERAL_SECRET = process.env.ADMIN_TOKEN || "dev-secret";
 const EPHEMERAL_SECRET_EFFECTIVE = (() => {
   const explicit = (process.env.EPHEMERAL_SECRET || "").trim();
   if (explicit) return explicit;
-  if (process.env.ADMIN_TOKEN && process.env.ADMIN_TOKEN.length >= 16) return process.env.ADMIN_TOKEN;
 
-  // Avoid predictable fallback in non-prod; rotate per process when no strong admin token exists.
+  const adminToken = (process.env.ADMIN_TOKEN || "").trim();
+  if (adminToken.length >= 16) return adminToken;
+
+  // Cluster-safe deterministic fallback derived from AES key env material.
+  // This avoids cross-instance token mismatches when ADMIN_TOKEN is weak/missing.
+  const aesSeed = String(process.env.AES_KEYS || process.env.AES_KEY_HEX || process.env.AES_KEY || "").trim();
+  if (aesSeed) {
+    const derived = crypto.createHash("sha256").update(`ephemeral:${aesSeed}`).digest("base64url");
+    console.warn("⚠️ EPHEMERAL_SECRET not provided and ADMIN_TOKEN is weak/missing; deriving fallback secret from AES key material.");
+    return derived;
+  }
+
+  // Last-resort per-process random fallback.
   const randomFallback = crypto.randomBytes(32).toString("base64url");
-  console.warn("⚠️ EPHEMERAL_SECRET not provided and ADMIN_TOKEN is weak/missing; using process-random ephemeral secret.");
+  console.warn("⚠️ EPHEMERAL_SECRET not provided and ADMIN_TOKEN/AES key are weak/missing; using process-random ephemeral secret.");
   return randomFallback;
 })();
 
