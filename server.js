@@ -1132,6 +1132,16 @@ function hashUaForToken(ua) {
   }
 }
 
+
+const CHALLENGE_DEBUG = String(process.env.CHALLENGE_DEBUG || "").trim() === "1";
+function logChallengeDebug(event, details = {}) {
+  if (!CHALLENGE_DEBUG) return;
+  try {
+    const payload = safeLogJson({ event, ...details }, LOG_ENTRY_MAX_LENGTH);
+    addLog(`[CHALLENGE-DEBUG] ${payload}`);
+  } catch {}
+}
+
 const CHALLENGE_REASON_MAX_LEN = 80;
 function sanitizeChallengeReason(reason) {
   if (!reason) return "";
@@ -1166,10 +1176,16 @@ function createChallengeToken(nextEnc, req, reason) {
 }
 
 function verifyChallengeToken(challengeToken, req) {
-  if (!challengeToken || typeof challengeToken !== "string") return null;
+  if (!challengeToken || typeof challengeToken !== "string") {
+    logChallengeDebug("token_missing_or_bad_type", { type: typeof challengeToken });
+    return null;
+  }
 
   const parts = challengeToken.split(".");
-  if (parts.length !== 2) return null;
+  if (parts.length !== 2) {
+    logChallengeDebug("token_malformed", { parts: parts.length });
+    return null;
+  }
 
   const [token, sig] = parts;
 
@@ -1177,24 +1193,46 @@ function verifyChallengeToken(challengeToken, req) {
         .createHmac("sha256", EPHEMERAL_SECRET_EFFECTIVE)
     .update(token)
     .digest("base64url");
-  if (sig !== expectedSig) return null;
+  if (sig !== expectedSig) {
+    logChallengeDebug("signature_mismatch", {
+      sigHash: safeLogValue(hashUaForToken(sig), 32),
+      expectedHash: safeLogValue(hashUaForToken(expectedSig), 32)
+    });
+    return null;
+  }
 
   try {
     const payload = JSON.parse(Buffer.from(token, "base64url").toString());
-    if (Date.now() > payload.exp) return null;
+    if (Date.now() > payload.exp) {
+      logChallengeDebug("token_expired", { exp: payload.exp, now: Date.now() });
+      return null;
+    }
 
     if (payload.ih || payload.uh) {
       const ip = getClientIp(req);
       const ua = req && req.get ? (req.get("user-agent") || "") : "";
       const ihNow = hashIpForToken(ip);
       const uhNow = hashUaForToken(ua);
-      if ((payload.ih && payload.ih !== ihNow) || (payload.uh && payload.uh !== uhNow)) {
+      const ihMismatch = !!(payload.ih && payload.ih !== ihNow);
+      const uhMismatch = !!(payload.uh && payload.uh !== uhNow);
+      if (ihMismatch || uhMismatch) {
+        logChallengeDebug("binding_mismatch", {
+          ihMismatch,
+          uhMismatch,
+          ip: safeLogValue(ip),
+          uaHash: safeLogValue(hashUaForToken(ua), 32),
+          tokenIh: safeLogValue(payload.ih || "-", 24),
+          reqIh: safeLogValue(ihNow || "-", 24),
+          tokenUh: safeLogValue(payload.uh || "-", 24),
+          reqUh: safeLogValue(uhNow || "-", 24)
+        });
         return null;
       }
     }
 
     return payload;
   } catch (e) {
+    logChallengeDebug("token_decode_error", { err: safeLogValue(e?.message || "decode_error", 120) });
     return null;
   }
 }
