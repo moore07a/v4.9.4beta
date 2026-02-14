@@ -1134,6 +1134,7 @@ function hashUaForToken(ua) {
 
 
 const CHALLENGE_DEBUG = String(process.env.CHALLENGE_DEBUG || "").trim() === "1";
+const CHALLENGE_BIND_STRICT = String(process.env.CHALLENGE_BIND_STRICT || "1").trim().toLowerCase() !== "0";
 function logChallengeDebug(event, details = {}) {
   if (!CHALLENGE_DEBUG) return;
   try {
@@ -1226,6 +1227,7 @@ function verifyChallengeToken(challengeToken, req) {
       const uhMismatch = !!(payload.uh && payload.uh !== uhNow);
       if (ihMismatch || uhMismatch) {
         logChallengeDebug("binding_mismatch", {
+          strict: CHALLENGE_BIND_STRICT,
           ihMismatch,
           uhMismatch,
           ip: safeLogValue(ip),
@@ -1235,8 +1237,13 @@ function verifyChallengeToken(challengeToken, req) {
           tokenUh: safeLogValue(payload.uh || "-", 24),
           reqUh: safeLogValue(uhNow || "-", 24)
         });
-        setChallengeVerifyReason(req, "binding_mismatch");
-        return null;
+
+        if (CHALLENGE_BIND_STRICT) {
+          setChallengeVerifyReason(req, "binding_mismatch");
+          return null;
+        }
+
+        setChallengeVerifyReason(req, "binding_mismatch_soft_accept");
       }
     }
 
@@ -2897,6 +2904,7 @@ app.get("/stream-log", (req, res) => {
   } else {
     res.write(`event: reset\ndata: {"ts":${Date.now()}}\n\n`);
   }
+);
 
   for (let i = startIdx; i < LOGS.length; i++) {
     sseSend(res, LOGS[i], LOG_IDS[i]);
@@ -3425,7 +3433,7 @@ function startupSummary() {
     `  • RateLimit: capacity=${RATE_CAPACITY}/window=${RATE_WINDOW_SECONDS}s`,
     `  • Bans: ttl=${BAN_TTL_SEC}s threshold=${BAN_AFTER_STRIKES} hpWeight=${STRIKE_WEIGHT_HP}`,
     `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
-    `  • Challenge security: rateLimit=5/5min tokens=10min`,
+    `  • Challenge security: rateLimit=5/5min tokens=10min bindStrict=${CHALLENGE_BIND_STRICT}`,
     `  • Geo fallback active=${Boolean(geoip)}`,
     `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`,
     ...publicContentStartupSummaryLines()
