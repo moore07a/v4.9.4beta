@@ -3269,6 +3269,10 @@ function generateAllPaths(persona, rotationSeed) {
   
   // Add resource pages
   paths.push('/resources');
+  paths.push('/articles');
+  paths.push('/guides');
+  paths.push('/articles/engineering-handbook');
+  paths.push('/guides/implementation-playbook');
   paths.push('/whitepapers');
   paths.push('/case-studies');
   paths.push('/webinars');
@@ -3330,6 +3334,84 @@ function renderEnhancedPublicPage(req, page) {
   if (page.path === '/') {
     pageTitle = persona.name;
     pageDescription = persona.description;
+  } else if (page.path === '/articles') {
+    pageTitle = 'Articles';
+    pageDescription = `Expert insights and field notes from the ${persona.name} team.`;
+
+    const articleCards = [
+      {
+        title: 'Building Reliable Infrastructure at Scale',
+        category: 'Architecture',
+        readTime: '8 min read',
+        summary: 'Design patterns and operational guardrails used by high-availability platforms.'
+      },
+      {
+        title: 'Performance Tuning Checklist for Production',
+        category: 'Operations',
+        readTime: '6 min read',
+        summary: 'A practical framework for improving latency, throughput, and resiliency.'
+      },
+      {
+        title: 'Security-First Deployment Workflows',
+        category: 'Security',
+        readTime: '7 min read',
+        summary: 'How to introduce verification, least privilege, and policy checks into CI/CD.'
+      }
+    ];
+
+    pageContent = `
+      <div style="display:grid; gap:20px;">
+        ${articleCards.map((article) => `
+          <article style="border:1px solid var(--border); background:linear-gradient(180deg,#fff,#f8fafc); border-radius:14px; padding:24px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+              <span style="font-size:12px; letter-spacing:0.4px; text-transform:uppercase; color:var(--primary); font-weight:700;">${article.category}</span>
+              <span style="font-size:13px; color:var(--muted);">${article.readTime}</span>
+            </div>
+            <h3 style="margin:0 0 10px 0; font-size:22px;">${article.title}</h3>
+            <p style="margin:0; color:var(--muted); line-height:1.65;">${article.summary}</p>
+          </article>
+        `).join('')}
+      </div>
+    `;
+  } else if (page.path === '/guides') {
+    pageTitle = 'Guides';
+    pageDescription = `Step-by-step playbooks to help teams launch and operate confidently.`;
+
+    const guides = [
+      {
+        title: 'Launch Readiness Guide',
+        level: 'Intermediate',
+        bullets: ['Environment hardening baseline', 'SLA and monitoring checklist', 'Rollback and incident response workflow']
+      },
+      {
+        title: 'Zero-Downtime Migration Guide',
+        level: 'Advanced',
+        bullets: ['Traffic shifting strategies', 'Data consistency validation', 'Progressive cutover execution plan']
+      },
+      {
+        title: 'Team Onboarding Guide',
+        level: 'Beginner',
+        bullets: ['Essential platform concepts', 'Recommended learning path', 'First-30-days success milestones']
+      }
+    ];
+
+    pageContent = `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px;">
+        ${guides.map((guide) => `
+          <section style="border:1px solid var(--border); border-radius:14px; background:#fff; padding:22px; box-shadow:0 8px 20px rgba(15,23,42,0.04);">
+            <div style="font-size:12px; color:var(--primary); font-weight:700; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:8px;">${guide.level}</div>
+            <h3 style="margin:0 0 12px 0; font-size:20px;">${guide.title}</h3>
+            <ul style="margin:0; padding-left:20px; color:var(--muted); line-height:1.8;">
+              ${guide.bullets.map((item) => `<li>${item}</li>`).join('')}
+            </ul>
+          </section>
+        `).join('')}
+      </div>
+      <div style="margin-top:24px; padding:18px 20px; border-radius:12px; background:#f8fafc; border:1px solid var(--border);">
+        <strong style="display:block; margin-bottom:6px;">Need implementation help?</strong>
+        <span style="color:var(--muted);">Contact our solutions team for architecture reviews, migration planning, and deployment support.</span>
+      </div>
+    `;
   } else if (page.path === '/pricing') {
     pageTitle = "Pricing Plans";
     pageDescription = `Flexible ${persona.name} pricing for any scale`;
