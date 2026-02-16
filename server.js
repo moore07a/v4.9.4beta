@@ -3240,6 +3240,7 @@ function generateAllPaths(persona, rotationSeed) {
   });
   
   // Add blog/articles section (10-15 posts)
+  paths.push('/blog');
   for (let i = 1; i <= 12; i++) {
     const topics = ['getting-started', 'tutorial', 'guide', 'announcement', 'best-practices', 'case-study'];
     const topic = topics[hash32(`${seed}:blog:${i}`) % topics.length];
@@ -3250,6 +3251,9 @@ function generateAllPaths(persona, rotationSeed) {
   }
   
   // Add product/service pages
+  paths.push('/pricing');
+  paths.push('/features');
+  paths.push('/signup');
   const productTypes = ['enterprise', 'pro', 'business', 'starter', 'custom'];
   productTypes.forEach((type, idx) => {
     paths.push(`/pricing/${type}`);
@@ -3284,6 +3288,7 @@ function generateAllPaths(persona, rotationSeed) {
   paths.push('/security');
   paths.push('/compliance');
   paths.push('/sla');
+  paths.push('/status');
   
   // Add company pages
   paths.push('/about');
