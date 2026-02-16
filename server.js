@@ -4884,6 +4884,7 @@ function startPublicBackgroundTraffic() {
   const generateVisit = async () => {
     try {
       const persona = getActivePersona();
+      const seed = rotationSeed();
       const allPaths = generateAllPaths(persona, seed);
       
       // Pick a random path
@@ -4973,35 +4974,7 @@ function registerEnhancedPublicRoutes() {
   
   // Register ALL generated paths
 allPaths.forEach(path => {
-  app.get(path, (req, res) => {
-    const normalizedPath = String(path || '').toLowerCase();
-    const acceptHeader = String(req.headers.accept || '').toLowerCase();
-    const hasJsonExtension = normalizedPath.endsWith('.json');
-    const isApiPath = normalizedPath.startsWith('/api/');
-    const wantsJson = acceptHeader.includes('application/json');
-
-    // Serve JSON only for explicit API/JSON requests.
-    if (isApiPath || hasJsonExtension || wantsJson) {
-      // API response
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.send(generateDummyAPIResponse(path, persona, `${seed}:${path}`));
-    } else {
-      // ✅ FIX: Force HTML for these paths
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'public, max-age=300');
-      
-      const pageTitle = path.split('/').pop()
-        .replace(/-/g, ' ')
-        .replace(/^\w/, c => c.toUpperCase());
-      
-      res.send(renderEnhancedPublicPage(req, { 
-        path, 
-        title: pageTitle,
-        summary: `${persona.name} - ${pageTitle}`
-      }));
-    }
-  });
+  app.get(path, (req, res) => servePublicPathResponse(req, res, path, persona, seed));
 });
   
   // ===== API ENDPOINTS - ✅ DEDICATED STATUS ENDPOINT with PUBLIC_SITE_NAME =====
@@ -5151,6 +5124,85 @@ Crawl-delay: 2`;
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.status(204).end();
   });
+}
+
+function derivePublicPageTitle(routePath = '') {
+  return String(routePath)
+    .split('/')
+    .pop()
+    .replace(/-/g, ' ')
+    .replace(/^\w/, c => c.toUpperCase()) || 'Home';
+}
+
+function servePublicPathResponse(req, res, routePath, persona, seed) {
+  const normalizedPath = String(routePath || '').toLowerCase();
+  const acceptHeader = String(req.headers.accept || '').toLowerCase();
+  const hasJsonExtension = normalizedPath.endsWith('.json');
+  const isApiPath = normalizedPath.startsWith('/api/');
+  const wantsJson = acceptHeader.includes('application/json');
+
+  if (isApiPath || hasJsonExtension || wantsJson) {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-cache');
+    return res.send(generateDummyAPIResponse(routePath, persona, `${seed}:${routePath}`));
+  }
+
+  const pageTitle = derivePublicPageTitle(routePath);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+
+  return res.send(renderEnhancedPublicPage(req, {
+    path: routePath,
+    title: pageTitle,
+    summary: `${persona.name} - ${pageTitle}`
+  }));
+}
+
+let cachedPublicPathState = {
+  key: '',
+  paths: new Set()
+};
+
+function getCurrentPublicPathSet() {
+  const persona = getActivePersona();
+  const seed = rotationSeed();
+  const cacheKey = `${persona.sitekey}:${seed}`;
+
+  if (cachedPublicPathState.key !== cacheKey) {
+    cachedPublicPathState = {
+      key: cacheKey,
+      paths: new Set(generateAllPaths(persona, seed))
+    };
+  }
+
+  return { persona, seed, paths: cachedPublicPathState.paths };
+}
+
+function shouldHandleAsDynamicPublicPath(req) {
+  const publicSurfaceEnabled = isPublicContentSurfaceEnabled();
+  if (!publicSurfaceEnabled) return false;
+
+  if (!['GET', 'HEAD'].includes(req.method)) return false;
+
+  const pathname = String(req.path || '');
+  if (!pathname || pathname === '/') return false;
+
+  const reservedPrefixes = [
+    '/challenge',
+    '/ts-client-log',
+    '/interstitial-human',
+    '/stream-log',
+    '/view-log',
+    '/__debug',
+    '/admin',
+    '/health',
+    '/turnstile-sitekey',
+    '/decrypt-challenge-data',
+    '/e/',
+    '/r'
+  ];
+
+  return !reservedPrefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
 // ================== INITIALIZATION ==================
@@ -6326,6 +6378,16 @@ function handleChallengeFragment(req, res) {
 
 app.post("/challenge-fragment", limitChallengeView, handleChallengeFragment);
 app.get("/challenge-fragment", limitChallengeView, handleChallengeFragment);
+
+app.use((req, res, next) => {
+  if (!shouldHandleAsDynamicPublicPath(req)) return next();
+
+  const pathname = String(req.path || '');
+  const { persona, seed, paths } = getCurrentPublicPathSet();
+  if (!paths.has(pathname)) return next();
+
+  return servePublicPathResponse(req, res, pathname, persona, seed);
+});
 
 app.get("/e/:data(*)", (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(3);
