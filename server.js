@@ -3232,7 +3232,11 @@ const PUBLIC_SITE_NAME = PUBLIC_SITE_NAME_OVERRIDE || getActivePersona().name;
 // ================== GENERATE DUMMY PATHS ==================
 const PUBLIC_CORE_MARKETING_PATHS = [
   '/products', '/blog', '/articles', '/guides', '/pricing', '/solutions', '/docs',
+<<<<<<< codex/investigate-/products-not-found-error-ylcm8r
+  '/about', '/contact', '/features', '/developers', '/network', '/status', '/security', '/support'
+=======
   '/about', '/contact', '/features', '/developers', '/network', '/status'
+>>>>>>> main
 ];
 
 function generateAllPaths(persona, rotationSeed) {
@@ -4507,6 +4511,73 @@ GET /bucket-name/file.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...&
           <a href="/contact" style="background: var(--primary); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 500;">Get started</a>
         </div>
 
+      </div>
+    `;
+
+  } else if (page.path === '/security') {
+    pageTitle = "Security";
+    pageDescription = `Security controls, compliance posture, and trust practices at ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top:20px; display:grid; gap:18px;">
+        <section style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h3 style="margin:0 0 10px; font-size:24px;">Platform security baseline</h3>
+          <p style="margin:0 0 14px; color:var(--muted);">${persona.name} is designed with layered controls across identity, transport, application, and data planes.</p>
+          <ul style="margin:0; padding-left:20px; color:var(--muted); line-height:1.8;">
+            <li>Encryption in transit (TLS 1.2+) and at rest with managed key rotation.</li>
+            <li>Role-based access control with audit-ready access logs.</li>
+            <li>Default-deny network controls and environment isolation.</li>
+            <li>Continuous vulnerability scanning and dependency hygiene workflows.</li>
+          </ul>
+        </section>
+
+        <section style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px;">
+          ${[
+            ['Compliance', 'SOC 2 controls mapped to operational runbooks and evidence collection.'],
+            ['Monitoring', '24/7 alerting for latency, availability, and suspicious traffic patterns.'],
+            ['Incident Response', 'Documented on-call escalation paths and post-incident review process.'],
+            ['Data Governance', 'Retention controls, lifecycle policies, and regional data boundaries.']
+          ].map(([title, detail]) => `
+            <article style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:18px;">
+              <h4 style="margin:0 0 8px; font-size:18px;">${title}</h4>
+              <p style="margin:0; color:var(--muted); font-size:14px; line-height:1.6;">${detail}</p>
+            </article>
+          `).join('')}
+        </section>
+      </div>
+    `;
+  } else if (page.path === '/support') {
+    pageTitle = "Support";
+    pageDescription = `Technical support resources, response channels, and service guidance from ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top:20px; display:grid; gap:18px;">
+        <section style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h3 style="margin:0 0 10px; font-size:24px;">How we support your team</h3>
+          <p style="margin:0; color:var(--muted);">From onboarding to production incidents, our support workflows are built to keep critical systems healthy.</p>
+        </section>
+
+        <section style="display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px;">
+          ${[
+            ['Standard Support', 'Business hours coverage, ticket queue, and response SLA within 1 business day.'],
+            ['Priority Support', '24/7 coverage for production-impacting issues with expedited triage.'],
+            ['Technical Advisory', 'Architecture reviews, migration planning, and optimization guidance.']
+          ].map(([tier, detail]) => `
+            <article style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:18px;">
+              <h4 style="margin:0 0 8px; font-size:18px;">${tier}</h4>
+              <p style="margin:0; color:var(--muted); font-size:14px; line-height:1.6;">${detail}</p>
+            </article>
+          `).join('')}
+        </section>
+
+        <section style="background:linear-gradient(180deg,#fff,#f8fafc); border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h4 style="margin:0 0 10px; font-size:20px;">Recommended support channels</h4>
+          <ul style="margin:0; padding-left:20px; color:var(--muted); line-height:1.8;">
+            <li>Open support requests through <a href="/contact">/contact</a> for account and technical issues.</li>
+            <li>Check <a href="/status">/status</a> for ongoing incidents and maintenance notices.</li>
+            <li>Use <a href="/docs">/docs</a> for implementation and troubleshooting references.</li>
+          </ul>
+        </section>
       </div>
     `;
 
