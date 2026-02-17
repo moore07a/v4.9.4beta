@@ -3230,9 +3230,17 @@ function getActivePersona() {
 const PUBLIC_SITE_NAME = PUBLIC_SITE_NAME_OVERRIDE || getActivePersona().name;
 
 // ================== GENERATE DUMMY PATHS ==================
+const PUBLIC_CORE_MARKETING_PATHS = [
+  '/products', '/blog', '/articles', '/guides', '/pricing', '/solutions', '/docs',
+  '/about', '/contact', '/features', '/developers', '/network', '/status', '/security', '/support'
+];
+
 function generateAllPaths(persona, rotationSeed) {
   const paths = [];
   const seed = rotationSeed || 'default-seed'; // Use provided seed or fallback
+
+  // Always include core marketing pages so dynamic router cannot miss known render branches.
+  paths.push(...PUBLIC_CORE_MARKETING_PATHS);
   
   // Add standard footer links
   persona.footerLinks.forEach(link => {
@@ -3251,11 +3259,13 @@ function generateAllPaths(persona, rotationSeed) {
   }
   
   // Add product/service pages
+  paths.push('/products');
   paths.push('/pricing');
   paths.push('/features');
   paths.push('/signup');
   const productTypes = ['enterprise', 'pro', 'business', 'starter', 'custom'];
   productTypes.forEach((type, idx) => {
+    paths.push(`/products/${type}`);
     paths.push(`/pricing/${type}`);
     paths.push(`/features/${type}`);
   });
@@ -3415,6 +3425,116 @@ function renderEnhancedPublicPage(req, page) {
       <div style="margin-top:24px; padding:18px 20px; border-radius:12px; background:#f8fafc; border:1px solid var(--border);">
         <strong style="display:block; margin-bottom:6px;">Need implementation help?</strong>
         <span style="color:var(--muted);">Contact our solutions team for architecture reviews, migration planning, and deployment support.</span>
+      </div>
+    `;
+  } else if (page.path === '/products') {
+    pageTitle = 'Products';
+    pageDescription = `Explore ${persona.name} products designed for reliability, security, and scale.`;
+
+    const productCards = [
+      {
+        name: 'Core Platform',
+        subtitle: 'Unified control plane',
+        summary: `Manage environments, policies, and deployments from one operational dashboard built for ${persona.name}.`,
+        highlights: ['Environment orchestration', 'Policy templates', 'Role-based access controls'],
+        cta: '/features'
+      },
+      {
+        name: 'Edge Security Suite',
+        subtitle: 'Threat prevention at the edge',
+        summary: 'Protect applications with automated bot mitigation, adaptive rate limiting, and real-time threat intelligence.',
+        highlights: ['WAF managed rules', 'Bot scoring + actions', 'Regional traffic controls'],
+        cta: '/security'
+      },
+      {
+        name: 'Observability & Insights',
+        subtitle: 'Operational intelligence',
+        summary: 'Turn service telemetry into decisions with SLO dashboards, anomaly alerts, and capacity forecasting.',
+        highlights: ['SLO tracking', 'Latency + error budgets', 'Automated weekly reports'],
+        cta: '/status'
+      }
+    ];
+
+    const relatedProducts = [
+      { title: 'Managed API Gateway', detail: 'Route, secure, and monitor API traffic with zero-downtime updates.' },
+      { title: 'Secure Object Storage', detail: 'S3-compatible storage with lifecycle controls and compliance logs.' },
+      { title: 'Global Delivery Network', detail: 'Low-latency edge caching and smart failover for global users.' },
+      { title: 'Identity & Access', detail: 'SSO, SCIM provisioning, and just-in-time elevated access workflows.' }
+    ];
+
+    pageContent = `
+      <div style="display:grid; gap:24px; margin-top:20px;">
+        <section style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px;">
+          ${productCards.map((product) => `
+            <article style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:0 8px 20px rgba(15,23,42,0.04);">
+              <p style="margin:0 0 8px; font-size:12px; letter-spacing:0.3px; color:var(--primary); text-transform:uppercase; font-weight:700;">${product.subtitle}</p>
+              <h3 style="margin:0 0 10px; font-size:24px;">${product.name}</h3>
+              <p style="margin:0 0 14px; color:var(--muted); line-height:1.65;">${product.summary}</p>
+              <ul style="margin:0 0 16px; padding-left:20px; color:var(--muted); line-height:1.8;">
+                ${product.highlights.map((item) => `<li>${item}</li>`).join('')}
+              </ul>
+              <a href="${product.cta}" style="color:var(--primary); text-decoration:none; font-weight:600;">Learn more →</a>
+            </article>
+          `).join('')}
+        </section>
+
+        <section style="border:1px solid var(--border); border-radius:14px; background:linear-gradient(180deg,#fff,#f8fafc); padding:24px;">
+          <h3 style="margin:0 0 14px; font-size:24px;">Related products</h3>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px;">
+            ${relatedProducts.map((item) => `
+              <div style="padding:14px; border:1px solid var(--border); border-radius:10px; background:#fff;">
+                <strong style="display:block; margin-bottom:6px;">${item.title}</strong>
+                <span style="color:var(--muted); font-size:14px;">${item.detail}</span>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+      </div>
+    `;
+  } else if (page.path === '/blog') {
+    pageTitle = 'Blog';
+    pageDescription = `Insights, product updates, and implementation strategies from ${persona.name}.`;
+
+    const posts = [
+      {
+        category: 'Product',
+        title: 'How We Reduced P95 Latency Across Global Regions',
+        summary: 'A behind-the-scenes look at routing, edge compute, and caching optimizations that improved user experience worldwide.',
+        readTime: '7 min read'
+      },
+      {
+        category: 'Security',
+        title: 'A Practical Blueprint for Defense-in-Depth',
+        summary: 'Design principles and rollout steps for layering WAF, identity controls, and continuous verification in production.',
+        readTime: '9 min read'
+      },
+      {
+        category: 'Operations',
+        title: 'Incident Reviews That Actually Improve Reliability',
+        summary: 'An actionable post-incident process that helps teams detect patterns, remove toil, and prevent repeat failures.',
+        readTime: '6 min read'
+      },
+      {
+        category: 'Engineering',
+        title: 'Shipping Platform Features with Progressive Delivery',
+        summary: 'How canary rollouts, feature flags, and observability gates improve release confidence across teams.',
+        readTime: '8 min read'
+      }
+    ];
+
+    pageContent = `
+      <div style="display:grid; gap:18px; margin-top:20px;">
+        ${posts.map((post, index) => `
+          <article style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+              <span style="font-size:12px; letter-spacing:0.4px; text-transform:uppercase; color:var(--primary); font-weight:700;">${post.category}</span>
+              <span style="font-size:13px; color:var(--muted);">${post.readTime}</span>
+            </div>
+            <h3 style="margin:0 0 10px; font-size:24px;">${post.title}</h3>
+            <p style="margin:0; color:var(--muted); line-height:1.7;">${post.summary}</p>
+            <div style="margin-top:14px;"><a href="/blog/post-${index + 1}" style="color:var(--primary); text-decoration:none; font-weight:600;">Read article →</a></div>
+          </article>
+        `).join('')}
       </div>
     `;
   } else if (page.path === '/pricing') {
@@ -4387,6 +4507,73 @@ GET /bucket-name/file.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...&
           <a href="/contact" style="background: var(--primary); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 500;">Get started</a>
         </div>
 
+      </div>
+    `;
+
+  } else if (page.path === '/security') {
+    pageTitle = "Security";
+    pageDescription = `Security controls, compliance posture, and trust practices at ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top:20px; display:grid; gap:18px;">
+        <section style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h3 style="margin:0 0 10px; font-size:24px;">Platform security baseline</h3>
+          <p style="margin:0 0 14px; color:var(--muted);">${persona.name} is designed with layered controls across identity, transport, application, and data planes.</p>
+          <ul style="margin:0; padding-left:20px; color:var(--muted); line-height:1.8;">
+            <li>Encryption in transit (TLS 1.2+) and at rest with managed key rotation.</li>
+            <li>Role-based access control with audit-ready access logs.</li>
+            <li>Default-deny network controls and environment isolation.</li>
+            <li>Continuous vulnerability scanning and dependency hygiene workflows.</li>
+          </ul>
+        </section>
+
+        <section style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px;">
+          ${[
+            ['Compliance', 'SOC 2 controls mapped to operational runbooks and evidence collection.'],
+            ['Monitoring', '24/7 alerting for latency, availability, and suspicious traffic patterns.'],
+            ['Incident Response', 'Documented on-call escalation paths and post-incident review process.'],
+            ['Data Governance', 'Retention controls, lifecycle policies, and regional data boundaries.']
+          ].map(([title, detail]) => `
+            <article style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:18px;">
+              <h4 style="margin:0 0 8px; font-size:18px;">${title}</h4>
+              <p style="margin:0; color:var(--muted); font-size:14px; line-height:1.6;">${detail}</p>
+            </article>
+          `).join('')}
+        </section>
+      </div>
+    `;
+  } else if (page.path === '/support') {
+    pageTitle = "Support";
+    pageDescription = `Technical support resources, response channels, and service guidance from ${persona.name}`;
+
+    pageContent = `
+      <div style="margin-top:20px; display:grid; gap:18px;">
+        <section style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h3 style="margin:0 0 10px; font-size:24px;">How we support your team</h3>
+          <p style="margin:0; color:var(--muted);">From onboarding to production incidents, our support workflows are built to keep critical systems healthy.</p>
+        </section>
+
+        <section style="display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px;">
+          ${[
+            ['Standard Support', 'Business hours coverage, ticket queue, and response SLA within 1 business day.'],
+            ['Priority Support', '24/7 coverage for production-impacting issues with expedited triage.'],
+            ['Technical Advisory', 'Architecture reviews, migration planning, and optimization guidance.']
+          ].map(([tier, detail]) => `
+            <article style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:18px;">
+              <h4 style="margin:0 0 8px; font-size:18px;">${tier}</h4>
+              <p style="margin:0; color:var(--muted); font-size:14px; line-height:1.6;">${detail}</p>
+            </article>
+          `).join('')}
+        </section>
+
+        <section style="background:linear-gradient(180deg,#fff,#f8fafc); border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h4 style="margin:0 0 10px; font-size:20px;">Recommended support channels</h4>
+          <ul style="margin:0; padding-left:20px; color:var(--muted); line-height:1.8;">
+            <li>Open support requests through <a href="/contact">/contact</a> for account and technical issues.</li>
+            <li>Check <a href="/status">/status</a> for ongoing incidents and maintenance notices.</li>
+            <li>Use <a href="/docs">/docs</a> for implementation and troubleshooting references.</li>
+          </ul>
+        </section>
       </div>
     `;
 
@@ -6462,8 +6649,17 @@ function publicContentStartupSummaryLines() {
 
   const persona = getActivePersona();
   const allPaths = generateAllPaths(persona, rotationSeed());
+  const allPathSet = new Set(allPaths);
+  const missingCore = PUBLIC_CORE_MARKETING_PATHS.filter(path => !allPathSet.has(path));
+  const missingFooter = (persona.footerLinks || [])
+    .map(link => link && link.path)
+    .filter(path => path && path !== '/' && !allPathSet.has(path));
+
   lines.push(`[PUBLIC-CONTENT] Active persona: ${persona.name} (${persona.sitekey})`);
   lines.push(`[PUBLIC-CONTENT] Generated ${allPaths.length} unique paths, rotation=${PUBLIC_ROTATION_MODE}`);
+  if (missingCore.length || missingFooter.length) {
+    lines.push(`[PUBLIC-CONTENT] ⚠️ Path coverage gaps core=[${missingCore.join(',') || '-'}] footer=[${missingFooter.join(',') || '-'}]`);
+  }
   if (backgroundTrafficEnabled) {
     lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
   } else {
