@@ -3232,11 +3232,7 @@ const PUBLIC_SITE_NAME = PUBLIC_SITE_NAME_OVERRIDE || getActivePersona().name;
 // ================== GENERATE DUMMY PATHS ==================
 const PUBLIC_CORE_MARKETING_PATHS = [
   '/products', '/blog', '/articles', '/guides', '/pricing', '/solutions', '/docs',
-<<<<<<< codex/investigate-/products-not-found-error-ylcm8r
   '/about', '/contact', '/features', '/developers', '/network', '/status', '/security', '/support'
-=======
-  '/about', '/contact', '/features', '/developers', '/network', '/status'
->>>>>>> main
 ];
 
 function generateAllPaths(persona, rotationSeed) {
