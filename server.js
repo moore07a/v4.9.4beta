@@ -3069,6 +3069,7 @@ const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim(
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
 const PUBLIC_ENABLE_ANALYTICS = (process.env.PUBLIC_ENABLE_ANALYTICS || "1") === "1";
 const PUBLIC_ENABLE_BACKGROUND = (process.env.PUBLIC_ENABLE_BACKGROUND || "1") === "1";
+const PUBLIC_TRAFFIC_SUMMARY_EVERY = 10;
 
 // Safety gate: allow explicit force-enable while keeping default-off posture.
 function isPublicContentSurfaceEnabled() {
@@ -5115,6 +5116,33 @@ function generateEnhancedSitemap(req, persona, allPaths) {
 // ================== BACKGROUND TRAFFIC GENERATOR ==================
 function startPublicBackgroundTraffic() {
   if (!PUBLIC_ENABLE_BACKGROUND || !PUBLIC_CONTENT_SURFACE) return;
+  const stats = {
+    total: 0,
+    bot: 0,
+    human: 0,
+    errors: 0,
+    lastPath: "-"
+  };
+
+  function maybeLogPublicTrafficVisit(isBot, path, personaSitekey) {
+    stats.total += 1;
+    stats.lastPath = path || "-";
+    if (isBot) stats.bot += 1;
+    else stats.human += 1;
+
+    if (stats.total % PUBLIC_TRAFFIC_SUMMARY_EVERY === 0) {
+      addLog(
+        `[PUBLIC-TRAFFIC] summary total=${stats.total} bot=${stats.bot} human=${stats.human} errors=${stats.errors} lastPath=${safeLogValue(stats.lastPath, 80)}`
+      );
+    }
+  }
+
+  function maybeLogPublicTrafficError(error) {
+    stats.errors += 1;
+    if (stats.errors % PUBLIC_TRAFFIC_SUMMARY_EVERY === 0) {
+      addLog(`[PUBLIC-TRAFFIC] summary errors=${stats.errors} total=${stats.total} lastPath=${safeLogValue(stats.lastPath, 80)}`);
+    }
+  }
   
   const generateVisit = async () => {
     try {
@@ -5175,10 +5203,10 @@ function startPublicBackgroundTraffic() {
         }
       });
       
-      addLog(`[PUBLIC-TRAFFIC] Generated ${isBot ? 'bot' : 'human'} visit to ${randomPath} (${persona.sitekey})`);
+      maybeLogPublicTrafficVisit(isBot, randomPath, persona.sitekey);
       
     } catch (error) {
-      // Silent fail
+      maybeLogPublicTrafficError(error);
     }
     
     // Schedule next visit (30s - 3min)
@@ -6680,16 +6708,44 @@ app.get("/:data(*)", async (req, res) => {
 // ================== HEALTH CHECK CONSTANTS ==================
 const MIN_INTERVAL_MS  = process.env.NODE_ENV === "production" ? 60 * 1000 : 60 * 1000;
 const MIN_HEARTBEAT_MS = process.env.NODE_ENV === "production" ? 5  * 60 * 1000 : 5 * 60 * 1000;
+const MAX_INTERVAL_MS = parseMinHourToMs(process.env.HEALTH_INTERVAL_MAX ?? "15m", 15 * 60 * 1000);
+const MAX_HEARTBEAT_MS = parseMinHourToMs(process.env.HEALTH_HEARTBEAT_MAX ?? "1h", 60 * 60 * 1000);
+const ENFORCE_HEALTH_MAX = String(process.env.ENFORCE_HEALTH_MAX || "false").trim().toLowerCase() === "true";
 
-const HEALTH_INTERVAL_MS  = Math.max(
-  MIN_INTERVAL_MS,
-  parseMinHourToMs(process.env.HEALTH_INTERVAL  ?? "5m",  5 * 60 * 1000)
-);
+function clampMs(value, minMs, maxMs) {
+  return Math.min(Math.max(value, minMs), maxMs);
+}
 
-const HEALTH_HEARTBEAT_MS = Math.max(
-  MIN_HEARTBEAT_MS,
-  parseMinHourToMs(process.env.HEALTH_HEARTBEAT ?? "2h",  2 * 60 * 60 * 1000)
-);
+const HEALTH_INTERVAL_RAW_MS = parseMinHourToMs(process.env.HEALTH_INTERVAL ?? "5m", 5 * 60 * 1000);
+const HEALTH_HEARTBEAT_RAW_MS = parseMinHourToMs(process.env.HEALTH_HEARTBEAT ?? "2h", 2 * 60 * 60 * 1000);
+
+const HEALTH_INTERVAL_MS = ENFORCE_HEALTH_MAX
+  ? clampMs(HEALTH_INTERVAL_RAW_MS, MIN_INTERVAL_MS, MAX_INTERVAL_MS)
+  : Math.max(HEALTH_INTERVAL_RAW_MS, MIN_INTERVAL_MS);
+const HEALTH_HEARTBEAT_MS = ENFORCE_HEALTH_MAX
+  ? clampMs(HEALTH_HEARTBEAT_RAW_MS, MIN_HEARTBEAT_MS, MAX_HEARTBEAT_MS)
+  : Math.max(HEALTH_HEARTBEAT_RAW_MS, MIN_HEARTBEAT_MS);
+const HEALTH_INTERVAL_CAPPED = HEALTH_INTERVAL_RAW_MS !== HEALTH_INTERVAL_MS;
+const HEALTH_HEARTBEAT_CAPPED = HEALTH_HEARTBEAT_RAW_MS !== HEALTH_HEARTBEAT_MS;
+
+const EVENT_LOOP_LAG_WARN_MS = Math.max(100, parseInt(process.env.EVENT_LOOP_LAG_WARN_MS || "500", 10));
+const EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG_SAMPLE_MS || "1000", 10));
+
+function startEventLoopLagMonitor() {
+  let expected = Date.now() + EVENT_LOOP_LAG_SAMPLE_MS;
+  setInterval(() => {
+    const now = Date.now();
+    const lag = now - expected;
+    expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
+
+    if (lag < EVENT_LOOP_LAG_WARN_MS) return;
+
+    const mem = process.memoryUsage();
+    const rssMb = Math.round((mem.rss / (1024 * 1024)) * 10) / 10;
+    const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;
+    addLog(`[HEALTH] event-loop-lag=${Math.round(lag)}ms sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms rssMb=${rssMb} heapUsedMb=${heapUsedMb}`);
+  }, EVENT_LOOP_LAG_SAMPLE_MS);
+}
 
 const EVENT_LOOP_LAG_WARN_MS = Math.max(100, parseInt(process.env.EVENT_LOOP_LAG_WARN_MS || "500", 10));
 const EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG_SAMPLE_MS || "1000", 10));
@@ -6740,6 +6796,7 @@ function publicContentStartupSummaryLines() {
   }
   if (backgroundTrafficEnabled) {
     lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
+    lines.push(`[PUBLIC-TRAFFIC] Summary logging every ${PUBLIC_TRAFFIC_SUMMARY_EVERY} visits/errors`);
   } else {
     lines.push(`[PUBLIC-TRAFFIC] Background traffic generator disabled (PUBLIC_ENABLE_BACKGROUND=${PUBLIC_ENABLE_BACKGROUND}, PUBLIC_CONTENT_SURFACE=${PUBLIC_CONTENT_SURFACE})`);
   }
@@ -6751,6 +6808,13 @@ function startupSummary() {
     const sha = crypto.createHash("sha256").update(k).digest("hex");
     return `#${i} len=${k.length} sha256=${sha.slice(0,10)}…`;
   }).join(", ");
+
+  const healthLine = HEALTH_INTERVAL_CAPPED || HEALTH_HEARTBEAT_CAPPED
+    ? `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} (raw=${fmtDurMH(HEALTH_INTERVAL_RAW_MS)}) heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)} (raw=${fmtDurMH(HEALTH_HEARTBEAT_RAW_MS)})`
+    : `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`;
+  const healthPolicyLine = ENFORCE_HEALTH_MAX
+    ? `  • Health policy: enforceMax=true maxInterval=${fmtDurMH(MAX_INTERVAL_MS)} maxHeartbeat=${fmtDurMH(MAX_HEARTBEAT_MS)}`
+    : "  • Health policy: enforceMax=false (respect env cadence)";
 
   return [
     "🛡️ Security profile",
@@ -6768,7 +6832,8 @@ function startupSummary() {
     `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
     `  • Challenge security: rateLimit=5/5min tokens=10min`,
     `  • Geo fallback active=${Boolean(geoip)}`,
-    `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`,
+    healthLine,
+    healthPolicyLine,
     `  • Event loop monitor: sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms warn=${EVENT_LOOP_LAG_WARN_MS}ms`,
     ...publicContentStartupSummaryLines()
   ].join("\n");
@@ -6843,6 +6908,11 @@ app.listen(PORT, async () => {
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
+  if (HEALTH_INTERVAL_CAPPED || HEALTH_HEARTBEAT_CAPPED) {
+    addLog(
+      `[HEALTH-CONFIG] adjusted interval=${fmtDurMH(HEALTH_INTERVAL_MS)} rawInterval=${fmtDurMH(HEALTH_INTERVAL_RAW_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)} rawHeartbeat=${fmtDurMH(HEALTH_HEARTBEAT_RAW_MS)} enforceMax=${ENFORCE_HEALTH_MAX} maxInterval=${fmtDurMH(MAX_INTERVAL_MS)} maxHeartbeat=${fmtDurMH(MAX_HEARTBEAT_MS)}`
+    );
+  }
   addLog(startupSummary());
 
   // BYPASS status (CORRECT LOCATION)
