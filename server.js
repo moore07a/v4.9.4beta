@@ -2363,6 +2363,13 @@ const INTERSTITIAL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const INTERSTITIAL_MAX_ENTRIES = 10000;
 
 function pruneInterstitialState(now) {
+  for (const [key, entry] of INTERSTITIAL_STATE.entries()) {
+    const lastSeenAt = Number(entry?.lastSeenAt || 0);
+    if (!lastSeenAt || (now - lastSeenAt) > INTERSTITIAL_TTL_MS) {
+      INTERSTITIAL_STATE.delete(key);
+    }
+  }
+
   if (INTERSTITIAL_STATE.size <= INTERSTITIAL_MAX_ENTRIES) return;
   const it = INTERSTITIAL_STATE.keys();
   const firstKey = it.next().value;
