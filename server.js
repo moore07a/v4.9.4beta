@@ -5491,7 +5491,23 @@ app.post("/decrypt-challenge-data",
   }
 );
 
-app.get("/health", (_req, res) => res.json({ ok:true, time:new Date().toISOString() }));
+app.get("/health", (_req, res) => {
+  const turnstileHealthy = _health.ok !== false;
+  const statusCode = turnstileHealthy ? 200 : 503;
+
+  res.status(statusCode).json({
+    ok: turnstileHealthy,
+    time: new Date().toISOString(),
+    checks: {
+      turnstile: {
+        ok: _health.ok,
+        okStreak: _health.okStreak,
+        failStreak: _health.failStreak,
+        lastHeartbeat: _health.lastHeartbeat ? new Date(_health.lastHeartbeat).toISOString() : null
+      }
+    }
+  });
+});
 
 app.post(
 "/ts-client-log",
