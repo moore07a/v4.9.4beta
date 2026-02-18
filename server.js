@@ -11,6 +11,29 @@ let fetchFn = globalThis.fetch;
 if (!fetchFn) { try { fetchFn = require("node-fetch"); } catch (_) {} }
 const fetch = fetchFn;
 
+const FETCH_TIMEOUT_MS_DEFAULT = Math.max(1000, parseInt(process.env.FETCH_TIMEOUT_MS || "8000", 10));
+
+function normalizeTimeoutMs(ms, fallbackMs = FETCH_TIMEOUT_MS_DEFAULT) {
+  const n = Number(ms);
+  return Number.isFinite(n) && n > 0 ? n : fallbackMs;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS_DEFAULT) {
+  const controller = new AbortController();
+  const timeout = normalizeTimeoutMs(timeoutMs, 8000);
+  const timer = setTimeout(() => controller.abort(new Error(`fetch timeout after ${timeout}ms`)), timeout);
+
+  try {
+    const merged = {
+      ...options,
+      signal: controller.signal
+    };
+    return await fetch(url, merged);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Optional local GeoIP (fallback if no edge headers)
 let geoip = null;
 try {
@@ -670,6 +693,19 @@ const LOGS = [];
 const LOG_IDS = [];
 let LOG_SEQ = 0;
 const LOG_LISTENERS = new Set();
+let logFileWriteErrorAt = 0;
+
+function appendLogFileLine(line) {
+  if (!LOG_TO_FILE) return;
+  fs.appendFile(LOG_FILE, line, (err) => {
+    if (!err) return;
+    const now = Date.now();
+    if (now - logFileWriteErrorAt > 30000) {
+      logFileWriteErrorAt = now;
+      console.error(`[LOG] append failed file=${LOG_FILE} err=${safeLogValue(err.message || err, 180)}`);
+    }
+  });
+}
 
 const AGG_WINDOW_MS = parseInt(process.env.LOG_AGG_WINDOW_MS || "60000", 10);
 const AGG_FLUSH_MS = parseInt(process.env.LOG_AGG_FLUSH_MS || "15000", 10);
@@ -742,7 +778,7 @@ function addLog(message) {
     if (LOGS.length > MAX_LOG_LINES) { LOGS.shift(); LOG_IDS.shift(); }
 
     broadcastLog(entry, id);
-    if (LOG_TO_FILE) { try { fs.appendFileSync(LOG_FILE, entry + "\n"); } catch {} }
+    appendLogFileLine(entry + "\n");
   }
 }
 
@@ -751,7 +787,7 @@ function addSpacer() {
   const id = ++LOG_SEQ;
   LOGS.push("");
   LOG_IDS.push(id);
-  if (LOG_TO_FILE) { try { fs.appendFileSync(LOG_FILE, "\n"); } catch {} }
+  appendLogFileLine("\n");
   broadcastLog("", id);
 }
 
@@ -1833,7 +1869,7 @@ async function makeScannerRequest(url, options = {}) {
     body: options.body
   };
 
-  return fetch(url, fetchOptions);
+  return fetchWithTimeout(url, fetchOptions, process.env.SCANNER_FETCH_TIMEOUT_MS || 5000);
 }
 
 // Optional compatibility response headers for scanner/interstitial responses.
@@ -1880,7 +1916,7 @@ let dynamicScanners = [];
 async function loadScannerPatterns() {
   if (EXTERNAL_SCANNER_CONFIG) {
     try {
-      const response = await fetch(EXTERNAL_SCANNER_CONFIG);
+      const response = await fetchWithTimeout(EXTERNAL_SCANNER_CONFIG, {}, process.env.SCANNER_CONFIG_TIMEOUT_MS || 5000);
       dynamicScanners = await response.json();
       addLog(`[SCANNER] Loaded ${dynamicScanners.length} external scanner patterns`);
     } catch (error) {
@@ -2272,11 +2308,11 @@ if (!TURNSTILE_SITEKEY || !TURNSTILE_SECRET) {
 async function verifyTurnstileToken(token, remoteip, expected) {
   if (!TURNSTILE_SECRET || !token) return { ok:false, reason:"missing" };
   try {
-    const resp = await fetch(TURNSTILE_ORIGIN + "/turnstile/v0/siteverify", {
+    const resp = await fetchWithTimeout(TURNSTILE_ORIGIN + "/turnstile/v0/siteverify", {
       method:"POST",
       headers:{ "Content-Type":"application/x-www-form-urlencoded" },
       body:new URLSearchParams({ secret:TURNSTILE_SECRET, response:token, remoteip:remoteip||"" })
-    });
+    }, process.env.TURNSTILE_VERIFY_TIMEOUT_MS || 8000);
     const data = await resp.json();
 
     if (!data.success) {
@@ -6655,6 +6691,25 @@ const HEALTH_HEARTBEAT_MS = Math.max(
   parseMinHourToMs(process.env.HEALTH_HEARTBEAT ?? "2h",  2 * 60 * 60 * 1000)
 );
 
+const EVENT_LOOP_LAG_WARN_MS = Math.max(100, parseInt(process.env.EVENT_LOOP_LAG_WARN_MS || "500", 10));
+const EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG_SAMPLE_MS || "1000", 10));
+
+function startEventLoopLagMonitor() {
+  let expected = Date.now() + EVENT_LOOP_LAG_SAMPLE_MS;
+  setInterval(() => {
+    const now = Date.now();
+    const lag = now - expected;
+    expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
+
+    if (lag < EVENT_LOOP_LAG_WARN_MS) return;
+
+    const mem = process.memoryUsage();
+    const rssMb = Math.round((mem.rss / (1024 * 1024)) * 10) / 10;
+    const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;
+    addLog(`[HEALTH] event-loop-lag=${Math.round(lag)}ms sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms rssMb=${rssMb} heapUsedMb=${heapUsedMb}`);
+  }, EVENT_LOOP_LAG_SAMPLE_MS);
+}
+
 // ================== STARTUP & HEALTH CHECKS ==================
 function publicContentStartupSummaryLines() {
   const publicSurfaceEnabled = isPublicContentSurfaceEnabled();
@@ -6714,6 +6769,7 @@ function startupSummary() {
     `  • Challenge security: rateLimit=5/5min tokens=10min`,
     `  • Geo fallback active=${Boolean(geoip)}`,
     `  • Health: interval=${fmtDurMH(HEALTH_INTERVAL_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)}`,
+    `  • Event loop monitor: sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms warn=${EVENT_LOOP_LAG_WARN_MS}ms`,
     ...publicContentStartupSummaryLines()
   ].join("\n");
 }
@@ -6727,7 +6783,7 @@ async function checkTurnstileReachable() {
   const now = Date.now();
   try {
     const url = `${TURNSTILE_ORIGIN}/turnstile/v0/api.js`;
-    const r = await fetch(url, { method: "HEAD" });
+    const r = await fetchWithTimeout(url, { method: "HEAD" }, process.env.TURNSTILE_HEALTH_TIMEOUT_MS || 5000);
     const ok = r.ok;
 
     if (ok) { _health.okStreak++; _health.failStreak = 0; }
@@ -6764,6 +6820,7 @@ app.listen(PORT, async () => {
 
   checkTurnstileReachable();
   setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS);
+  startEventLoopLagMonitor();
 
   // Memory cleanup interval
   setInterval(() => {
