@@ -6747,6 +6747,25 @@ function startEventLoopLagMonitor() {
   }, EVENT_LOOP_LAG_SAMPLE_MS);
 }
 
+const EVENT_LOOP_LAG_WARN_MS = Math.max(100, parseInt(process.env.EVENT_LOOP_LAG_WARN_MS || "500", 10));
+const EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG_SAMPLE_MS || "1000", 10));
+
+function startEventLoopLagMonitor() {
+  let expected = Date.now() + EVENT_LOOP_LAG_SAMPLE_MS;
+  setInterval(() => {
+    const now = Date.now();
+    const lag = now - expected;
+    expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
+
+    if (lag < EVENT_LOOP_LAG_WARN_MS) return;
+
+    const mem = process.memoryUsage();
+    const rssMb = Math.round((mem.rss / (1024 * 1024)) * 10) / 10;
+    const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;
+    addLog(`[HEALTH] event-loop-lag=${Math.round(lag)}ms sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms rssMb=${rssMb} heapUsedMb=${heapUsedMb}`);
+  }, EVENT_LOOP_LAG_SAMPLE_MS);
+}
+
 // ================== STARTUP & HEALTH CHECKS ==================
 function publicContentStartupSummaryLines() {
   const publicSurfaceEnabled = isPublicContentSurfaceEnabled();
