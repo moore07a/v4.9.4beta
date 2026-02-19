@@ -3069,7 +3069,10 @@ const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim(
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
 const PUBLIC_ENABLE_ANALYTICS = (process.env.PUBLIC_ENABLE_ANALYTICS || "1") === "1";
 const PUBLIC_ENABLE_BACKGROUND = (process.env.PUBLIC_ENABLE_BACKGROUND || "1") === "1";
-const PUBLIC_TRAFFIC_SUMMARY_EVERY = 10;
+const PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW = parseInt(process.env.PUBLIC_TRAFFIC_SUMMARY_EVERY || "10", 10);
+const PUBLIC_TRAFFIC_SUMMARY_EVERY = Number.isFinite(PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW) && PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW > 0
+  ? PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW
+  : 10;
 
 // Safety gate: allow explicit force-enable while keeping default-off posture.
 function isPublicContentSurfaceEnabled() {
@@ -5117,107 +5120,50 @@ function generateEnhancedSitemap(req, persona, allPaths) {
 
 // ================== BACKGROUND TRAFFIC GENERATOR ==================
 function startPublicBackgroundTraffic() {
-  if (!PUBLIC_ENABLE_BACKGROUND || !PUBLIC_CONTENT_SURFACE) return;
+  if (!PUBLIC_CONTENT_SURFACE || !PUBLIC_ENABLE_BACKGROUND) return;
   const stats = {
     total: 0,
-    syntheticBot: 0,
-    syntheticBrowser: 0,
+    bot: 0,
+    realBrowser: 0,
     errors: 0,
     lastPath: "-"
   };
 
-  function maybeLogPublicTrafficVisit(isBot, path, personaSitekey) {
+  function isLikelyBotRequest(req) {
+    const ua = (req.get("user-agent") || "").toLowerCase();
+    const knownBotFragments = [
+      "bot", "spider", "crawler", "slurp", "duckduckbot", "bingbot", "googlebot", "ahrefsbot",
+      "semrushbot", "mj12bot", "dotbot", "yandex", "baiduspider", "curl", "wget", "python-requests",
+      "headless", "phantomjs", "scrapy"
+    ];
+    const isBotUa = knownBotFragments.some(fragment => ua.includes(fragment));
+    const missingSecHeaders = !req.get("sec-ch-ua") || !req.get("sec-fetch-site");
+    return isBotUa || missingSecHeaders;
+  }
+
+  function maybeLogPublicTrafficVisit(req, path) {
     stats.total += 1;
     stats.lastPath = path || "-";
-    if (isBot) stats.syntheticBot += 1;
-    else stats.syntheticBrowser += 1;
+    if (isLikelyBotRequest(req)) stats.bot += 1;
+    else stats.realBrowser += 1;
 
     if (stats.total % PUBLIC_TRAFFIC_SUMMARY_EVERY === 0) {
       addLog(
-        `[PUBLIC-TRAFFIC] synthetic-summary total=${stats.total} syntheticBot=${stats.syntheticBot} syntheticBrowser=${stats.syntheticBrowser} errors=${stats.errors} lastPath=${safeLogValue(stats.lastPath, 80)}`
+        `[PUBLIC-TRAFFIC] Summary total=${stats.total} Bot=${stats.bot} RealBrowser=${stats.realBrowser} errors=${stats.errors} lastPath=${safeLogValue(stats.lastPath, 80)}`
       );
     }
   }
 
-  function maybeLogPublicTrafficError(error) {
+  function maybeLogPublicTrafficError(error, path) {
     stats.errors += 1;
+    if (path) stats.lastPath = path;
     if (stats.errors % PUBLIC_TRAFFIC_SUMMARY_EVERY === 0) {
-      addLog(`[PUBLIC-TRAFFIC] synthetic-summary errors=${stats.errors} total=${stats.total} lastPath=${safeLogValue(stats.lastPath, 80)}`);
+      addLog(`[PUBLIC-TRAFFIC] Summary total=${stats.total} Bot=${stats.bot} RealBrowser=${stats.realBrowser} errors=${stats.errors} lastPath=${safeLogValue(stats.lastPath, 80)}`);
     }
   }
-  
-  const generateVisit = async () => {
-    try {
-      const persona = getActivePersona();
-      const seed = rotationSeed();
-      const allPaths = generateAllPaths(persona, seed);
-      
-      // Pick a random path
-      const randomPath = allPaths[Math.floor(Math.random() * allPaths.length)];
-      
-      // Random user agent (mix of browsers)
-      const userAgents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      ];
-      
-      // 30% chance of being a search engine bot
-      const isBot = Math.random() < 0.3;
-      const botAgents = [
-        'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        'Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)',
-        'Mozilla/5.0 (compatible; DuckDuckBot/1.0; +https://duckduckgo.com/duckduckbot)',
-        'Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)'
-      ];
-      
-      const ua = isBot 
-        ? botAgents[Math.floor(Math.random() * botAgents.length)]
-        : userAgents[Math.floor(Math.random() * userAgents.length)];
-      
-      // Random referrer
-      const referrers = [
-        'https://www.google.com/search?q=' + encodeURIComponent(persona.name),
-        'https://www.bing.com/search?q=' + encodeURIComponent(persona.sitekey),
-        'https://github.com/search?q=' + persona.sitekey,
-        'https://news.ycombinator.com',
-        'https://twitter.com',
-        'https://linkedin.com',
-        randomPath.includes('blog') ? 'https://www.reddit.com/r/programming' : '',
-        ''
-      ];
-      
-      const referrer = referrers[Math.floor(Math.random() * referrers.length)];
-      
-      // Make request
-      await fetch(`http://localhost:${PORT}${randomPath}`, {
-        headers: {
-          'User-Agent': ua,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'DNT': '1',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          ...(referrer && { 'Referer': referrer })
-        }
-      });
-      
-      maybeLogPublicTrafficVisit(isBot, randomPath, persona.sitekey);
-      
-    } catch (error) {
-      maybeLogPublicTrafficError(error);
-    }
-    
-    // Schedule next visit (30s - 3min)
-    const delay = 30000 + Math.random() * 150000;
-    setTimeout(generateVisit, delay);
-  };
-  
-  // Start after random delay (0-60s)
-  setTimeout(generateVisit, Math.random() * 60000);
+
+  app.locals.recordPublicTrafficVisit = maybeLogPublicTrafficVisit;
+  app.locals.recordPublicTrafficError = maybeLogPublicTrafficError;
 }
 
 // ================== REGISTER ENHANCED ROUTES ==================
@@ -5228,6 +5174,25 @@ function registerEnhancedPublicRoutes() {
   const persona = getActivePersona();
   const allPaths = generateAllPaths(persona, rotationSeed());
   const seed = rotationSeed();
+
+  app.use((req, res, next) => {
+    if ((req.method || "GET").toUpperCase() !== "GET") return next();
+
+    const path = req.path || "/";
+    const { paths: currentPathSet } = getCurrentPublicPathSet();
+    if (path !== "/" && !currentPathSet.has(path)) return next();
+
+    try {
+      if (typeof app.locals.recordPublicTrafficVisit === "function") {
+        app.locals.recordPublicTrafficVisit(req, path);
+      }
+    } catch (error) {
+      if (typeof app.locals.recordPublicTrafficError === "function") {
+        app.locals.recordPublicTrafficError(error, path);
+      }
+    }
+    next();
+  });
   
   // ===== STATIC PAGES =====
   // Homepage
@@ -6780,10 +6745,10 @@ function publicContentStartupSummaryLines() {
     lines.push(`[PUBLIC-CONTENT] ⚠️ Path coverage gaps core=[${missingCore.join(',') || '-'}] footer=[${missingFooter.join(',') || '-'}]`);
   }
   if (backgroundTrafficEnabled) {
-    lines.push(`[PUBLIC-TRAFFIC] Background traffic generator started (persona: ${persona.sitekey})`);
+    lines.push(`[PUBLIC-TRAFFIC] Real inbound traffic observer started (persona: ${persona.sitekey})`);
     lines.push(`[PUBLIC-TRAFFIC] Summary logging every ${PUBLIC_TRAFFIC_SUMMARY_EVERY} visits/errors`);
   } else {
-    lines.push(`[PUBLIC-TRAFFIC] Background traffic generator disabled (PUBLIC_ENABLE_BACKGROUND=${PUBLIC_ENABLE_BACKGROUND}, PUBLIC_CONTENT_SURFACE=${PUBLIC_CONTENT_SURFACE})`);
+    lines.push(`[PUBLIC-TRAFFIC] Real inbound traffic observer disabled (PUBLIC_ENABLE_BACKGROUND=${PUBLIC_ENABLE_BACKGROUND}, PUBLIC_CONTENT_SURFACE=${PUBLIC_CONTENT_SURFACE})`);
   }
   return lines;
 }
