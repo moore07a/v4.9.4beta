@@ -5185,6 +5185,7 @@ function registerEnhancedPublicRoutes() {
   
   const persona = getActivePersona();
   const allPaths = generateAllPaths(persona, rotationSeed());
+  const publicPathSet = new Set(allPaths);
   const seed = rotationSeed();
 
   app.use((req, res, next) => {
@@ -6777,6 +6778,9 @@ function startupSummary() {
   const healthPolicyLine = ENFORCE_HEALTH_MAX
     ? `  • Health policy: enforceMax=true maxInterval=${fmtDurMH(MAX_INTERVAL_MS)} maxHeartbeat=${fmtDurMH(MAX_HEARTBEAT_MS)}`
     : "  • Health policy: enforceMax=false (respect env cadence)";
+  const healthConfigLine = (HEALTH_INTERVAL_CAPPED || HEALTH_HEARTBEAT_CAPPED)
+    ? `[HEALTH-CONFIG] adjusted interval=${fmtDurMH(HEALTH_INTERVAL_MS)} rawInterval=${fmtDurMH(HEALTH_INTERVAL_RAW_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)} rawHeartbeat=${fmtDurMH(HEALTH_HEARTBEAT_RAW_MS)} enforceMax=${ENFORCE_HEALTH_MAX} maxInterval=${fmtDurMH(MAX_INTERVAL_MS)} maxHeartbeat=${fmtDurMH(MAX_HEARTBEAT_MS)}`
+    : null;
 
   return [
     "🛡️ Security profile",
@@ -6796,6 +6800,7 @@ function startupSummary() {
     `  • Geo fallback active=${Boolean(geoip)}`,
     healthLine,
     healthPolicyLine,
+    ...(healthConfigLine ? [healthConfigLine] : []),
     `  • Event loop monitor: sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms warn=${EVENT_LOOP_LAG_WARN_MS}ms`,
     ...publicContentStartupSummaryLines()
   ].join("\n");
@@ -6870,11 +6875,6 @@ app.listen(PORT, async () => {
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
-  if (HEALTH_INTERVAL_CAPPED || HEALTH_HEARTBEAT_CAPPED) {
-    addLog(
-      `[HEALTH-CONFIG] adjusted interval=${fmtDurMH(HEALTH_INTERVAL_MS)} rawInterval=${fmtDurMH(HEALTH_INTERVAL_RAW_MS)} heartbeat=${fmtDurMH(HEALTH_HEARTBEAT_MS)} rawHeartbeat=${fmtDurMH(HEALTH_HEARTBEAT_RAW_MS)} enforceMax=${ENFORCE_HEALTH_MAX} maxInterval=${fmtDurMH(MAX_INTERVAL_MS)} maxHeartbeat=${fmtDurMH(MAX_HEARTBEAT_MS)}`
-    );
-  }
   addLog(startupSummary());
 
   // BYPASS status (CORRECT LOCATION)
