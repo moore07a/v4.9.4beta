@@ -3069,7 +3069,10 @@ const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim(
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
 const PUBLIC_ENABLE_ANALYTICS = (process.env.PUBLIC_ENABLE_ANALYTICS || "1") === "1";
 const PUBLIC_ENABLE_BACKGROUND = (process.env.PUBLIC_ENABLE_BACKGROUND || "1") === "1";
-const PUBLIC_TRAFFIC_SUMMARY_EVERY = 10;
+const PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW = parseInt(process.env.PUBLIC_TRAFFIC_SUMMARY_EVERY || "10", 10);
+const PUBLIC_TRAFFIC_SUMMARY_EVERY = Number.isFinite(PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW) && PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW > 0
+  ? PUBLIC_TRAFFIC_SUMMARY_EVERY_RAW
+  : 10;
 
 // Safety gate: allow explicit force-enable while keeping default-off posture.
 function isPublicContentSurfaceEnabled() {
@@ -5175,15 +5178,18 @@ function registerEnhancedPublicRoutes() {
 
   app.use((req, res, next) => {
     if ((req.method || "GET").toUpperCase() !== "GET") return next();
-    if (!publicPathSet.has(req.path || "/")) return next();
+
+    const path = req.path || "/";
+    const { paths: currentPathSet } = getCurrentPublicPathSet();
+    if (path !== "/" && !currentPathSet.has(path)) return next();
 
     try {
       if (typeof app.locals.recordPublicTrafficVisit === "function") {
-        app.locals.recordPublicTrafficVisit(req, req.path || "/");
+        app.locals.recordPublicTrafficVisit(req, path);
       }
     } catch (error) {
       if (typeof app.locals.recordPublicTrafficError === "function") {
-        app.locals.recordPublicTrafficError(error, req.path || "/");
+        app.locals.recordPublicTrafficError(error, path);
       }
     }
     next();
