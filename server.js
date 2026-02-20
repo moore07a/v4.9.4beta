@@ -5192,8 +5192,11 @@ function registerEnhancedPublicRoutes() {
     if ((req.method || "GET").toUpperCase() !== "GET") return next();
 
     const path = req.path || "/";
-    const { paths: currentPathSet } = getCurrentPublicPathSet();
-    if (path !== "/" && !currentPathSet.has(path)) return next();
+    if (path !== "/") {
+      const { paths: currentPathSet } = getCurrentPublicPathSet();
+      const isServedPublicRoute = publicPathSet.has(path) || currentPathSet.has(path);
+      if (!isServedPublicRoute) return next();
+    }
 
     try {
       if (typeof app.locals.recordPublicTrafficVisit === "function") {
