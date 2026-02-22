@@ -1510,10 +1510,21 @@ const HEADLESS_SOFT_STRIKE   = (process.env.HEADLESS_SOFT_STRIKE || "0") === "1"
 const ALLOWLIST_DOMAINS = (process.env.ALLOWLIST_DOMAINS || "test2.com,sub.test2.com") // landing
   .split(",").map(normalizeSuffixPattern).filter(Boolean);
 
-const EXPECT_HOSTNAME_PATTERNS = (EXPECT_HOSTNAME || "")
+const EXPECT_HOSTNAME_RAW_ENTRIES = (EXPECT_HOSTNAME || "")
   .split(",")
-  .map(normalizeSuffixPattern)
+  .map((entry) => entry.trim())
   .filter(Boolean);
+
+const EXPECT_HOSTNAME_PATTERNS = [];
+const EXPECT_HOSTNAME_INVALID_ENTRIES = [];
+for (const entry of EXPECT_HOSTNAME_RAW_ENTRIES) {
+  const parsed = normalizeSuffixPattern(entry);
+  if (parsed) {
+    EXPECT_HOSTNAME_PATTERNS.push(parsed);
+  } else {
+    EXPECT_HOSTNAME_INVALID_ENTRIES.push(entry);
+  }
+}
 
 // ================== CONFIGURATION VALIDATION ==================
 const normalizeTurnstileEnv = (value) => String(value || "").trim();
@@ -1541,6 +1552,13 @@ function validateConfig() {
   // Validate allowlist configuration
   if (ALLOWLIST_DOMAINS.length === 0) {
     warnings.push("No allowlist domains configured - all redirects will be blocked unless explicitly allowed");
+  }
+
+  if (EXPECT_HOSTNAME_INVALID_ENTRIES.length > 0) {
+    errors.push(`Invalid TURNSTILE_EXPECT_HOSTNAME entries: ${EXPECT_HOSTNAME_INVALID_ENTRIES.join(",")}`);
+  }
+  if (EXPECT_HOSTNAME_RAW_ENTRIES.length > 0 && EXPECT_HOSTNAME_PATTERNS.length === 0) {
+    errors.push("TURNSTILE_EXPECT_HOSTNAME contains no valid hostname patterns");
   }
 
   // Validate TURNSTILE credentials format
@@ -2336,19 +2354,12 @@ async function verifyTurnstileToken(token, remoteip, expected) {
       if (age > (expected.maxAgeSec||MAX_TOKEN_AGE_SEC)) return { ok:false, reason:"token_too_old", data, age };
     }
 
-    if (EXPECT_HOSTNAME_PATTERNS.length && data.hostname) {
+    if (EXPECT_HOSTNAME_RAW_ENTRIES.length && data.hostname) {
       const got = normHost(data.hostname);
       const matched = EXPECT_HOSTNAME_PATTERNS.some((pattern) => hostMatchesSuffix(got, pattern));
 
       if (!matched) {
-        const expected = EXPECT_HOSTNAME_PATTERNS
-          .map((pattern) => {
-            if (pattern.allowSubdomains && !pattern.includeApex) return `*.${pattern.suffix}`;
-            if (pattern.allowSubdomains && pattern.includeApex) return `${pattern.suffix},*.${pattern.suffix}`;
-            return pattern.suffix;
-          })
-          .join(",") || "-";
-
+        const expected = EXPECT_HOSTNAME_RAW_ENTRIES.join(",") || "-";
         addLog(`[TS-HOST-MISMATCH] got=${got} expected=[${expected}]`);
         addSpacer();
         data.hostname = got;
