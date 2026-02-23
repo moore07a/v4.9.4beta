@@ -5830,6 +5830,38 @@ function wildcardMatches(hostname, wildcardPattern) {
   return cleanHost !== suffix;
 }
 
+function isLikelyInternalHostname(hostname) {
+  const normalized = String(hostname || "").toLowerCase().split(":")[0].trim();
+  if (!normalized) return true;
+  if (normalized === "localhost") return true;
+  if (normalized.endsWith(".local")) return true;
+  if (normalized.endsWith(".internal")) return true;
+  if (normalized.endsWith(".up.railway.app")) return true;
+  return false;
+}
+
+function parseConfiguredBaseEntry(entry) {
+  try {
+    if (!entry || entry === "*") return null;
+    const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+    const asUrl = new URL(value);
+    const wildcard = asUrl.hostname.startsWith("*.");
+    const canonicalHost = wildcard ? asUrl.hostname.slice(2) : asUrl.host;
+    const baseUrl = `${asUrl.protocol}//${canonicalHost}`;
+
+    return {
+      hostname: asUrl.hostname,
+      protocol: asUrl.protocol,
+      wildcard,
+      baseUrl,
+      isInternal: isLikelyInternalHostname(asUrl.hostname)
+    };
+  } catch {
+    return null;
+  }
+}
+
+
 function resolvePublicBaseUrls(req, options = {}) {
   const rawForwardedHost = String(req.get("x-forwarded-host") || "")
     .split(",")
@@ -5849,61 +5881,53 @@ function resolvePublicBaseUrls(req, options = {}) {
   const preferConfiguredCanonical = options && options.preferConfiguredCanonical === true;
 
   const configured = parsePublicBaseUrlEntries();
+  const parsedConfigured = configured
+    .map((entry) => parseConfiguredBaseEntry(entry))
+    .filter(Boolean);
 
   if (requestHostOnly) {
     if (preferConfiguredCanonical) {
-      const firstConfiguredCanonical = configured
-        .map((entry) => {
-          try {
-            if (!entry || entry === "*" || entry.startsWith("*.")) return null;
-            const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-            const asUrl = new URL(value);
-            return `${asUrl.protocol}//${asUrl.host}`;
-          } catch {
-            return null;
-          }
-        })
+      const matchingConfiguredCanonical = parsedConfigured
+        .filter((entry) => entry.wildcard ? wildcardMatches(hostNoPort, entry.hostname) : entry.hostname === hostNoPort)
+        .sort((a, b) => Number(a.isInternal) - Number(b.isInternal))
+        .map((entry) => entry.wildcard ? `${entry.protocol}//${host}` : entry.baseUrl)
         .find(Boolean);
 
-      if (firstConfiguredCanonical) {
-        return [firstConfiguredCanonical];
+      if (matchingConfiguredCanonical) {
+        return [matchingConfiguredCanonical];
+      }
+
+      const preferredConfiguredCanonical = parsedConfigured
+        .sort((a, b) => {
+          const internalDiff = Number(a.isInternal) - Number(b.isInternal);
+          if (internalDiff !== 0) return internalDiff;
+          return Number(a.wildcard) - Number(b.wildcard);
+        })
+        .map((entry) => entry.baseUrl)
+        .find(Boolean);
+
+      if (preferredConfiguredCanonical) {
+        return [preferredConfiguredCanonical];
       }
     }
 
     return [requestBase];
   }
 
-  if (configured.length === 0) {
+  if (parsedConfigured.length === 0) {
     return [requestBase];
   }
 
   const out = [];
-  for (const entry of configured) {
-    if (entry === "*") {
-      out.push(requestBase);
-      continue;
-    }
-
-    const asUrl = (() => {
-      try {
-        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-        return new URL(value);
-      } catch {
-        return null;
-      }
-    })();
-
-    if (!asUrl) continue;
-
-    const wildcardHost = asUrl.hostname;
-    if (wildcardHost.startsWith("*.")) {
-      if (wildcardMatches(hostNoPort, wildcardHost)) {
-        out.push(`${asUrl.protocol}//${host}`);
+  for (const entry of parsedConfigured) {
+    if (entry.wildcard) {
+      if (wildcardMatches(hostNoPort, entry.hostname)) {
+        out.push(`${entry.protocol}//${host}`);
       }
       continue;
     }
 
-    out.push(`${asUrl.protocol}//${asUrl.host}`);
+    out.push(entry.baseUrl);
   }
 
   const resolved = [...new Set(out.filter(Boolean))];
