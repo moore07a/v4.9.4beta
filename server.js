@@ -5841,9 +5841,27 @@ function resolvePublicBaseUrls(req, options = {}) {
     req.get("host") ||
     "localhost"
   ).trim();
-  const hostNoPort = host.split(":")[0];
+  const toHostName = (rawHost) => {
+    const value = String(rawHost || "").trim();
+    if (!value) return "";
+
+    const withoutPath = value.split("/")[0].trim();
+    const asUrl = (() => {
+      try {
+        if (/^https?:\/\//i.test(withoutPath)) return new URL(withoutPath);
+        return null;
+      } catch {
+        return null;
+      }
+    })();
+
+    if (asUrl && asUrl.hostname) return normHost(asUrl.hostname);
+    return normHost(withoutPath);
+  };
+
+  const hostNoPort = toHostName(host);
   const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
-  const requestBase = `${proto}://${host}`;
+  const requestBase = hostNoPort ? `${proto}://${hostNoPort}` : `${proto}://localhost`;
   const requestHostOnly = options && options.requestHostOnly === true;
   const preferConfiguredCanonical = options && options.preferConfiguredCanonical === true;
 
@@ -5864,7 +5882,7 @@ function resolvePublicBaseUrls(req, options = {}) {
 
   const firstExpectedCanonical = EXPECT_HOSTNAME_PATTERNS
     .map((pattern) => {
-      if (!pattern || !pattern.suffix) return null;
+      if (!pattern || !pattern.suffix || !pattern.includeApex) return null;
       return `https://${pattern.suffix}`;
     })
     .find(Boolean);
@@ -5938,7 +5956,7 @@ function resolvePublicBaseUrls(req, options = {}) {
     const wildcardHost = asUrl.hostname;
     if (wildcardHost.startsWith("*.")) {
       if (wildcardMatches(hostNoPort, wildcardHost)) {
-        out.push(`${asUrl.protocol}//${host}`);
+        out.push(`${asUrl.protocol}//${hostNoPort}`);
       }
       continue;
     }
