@@ -5830,17 +5830,10 @@ function wildcardMatches(hostname, wildcardPattern) {
 }
 
 function resolvePublicBaseUrls(req, options = {}) {
-  const rawForwardedHost = String(req.get("x-forwarded-host") || "")
+  const rawForwardedHosts = String(req.get("x-forwarded-host") || "")
     .split(",")
     .map((part) => part.trim())
-    .find(Boolean);
-  const host = String(
-    rawForwardedHost ||
-    req.get("x-original-host") ||
-    req.get("x-host") ||
-    req.get("host") ||
-    "localhost"
-  ).trim();
+    .filter(Boolean);
   const toHostName = (rawHost) => {
     const value = String(rawHost || "").trim();
     if (!value) return "";
@@ -5860,9 +5853,6 @@ function resolvePublicBaseUrls(req, options = {}) {
     return normHost(withoutPath);
   };
 
-  const hostNoPort = toHostName(host);
-  const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
-  const requestBase = hostNoPort ? `${proto}://${hostNoPort}` : `${proto}://localhost`;
   const requestHostOnly = options && options.requestHostOnly === true;
   const preferConfiguredCanonical = options && options.preferConfiguredCanonical === true;
 
@@ -5888,15 +5878,15 @@ function resolvePublicBaseUrls(req, options = {}) {
     })
     .find(Boolean);
 
-  const isExpectedHostTrusted = EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
+  const isHostTrustedByExpected = (candidateHost) => EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
     if (!pattern || !pattern.suffix) return false;
-    if (hostMatchesSuffix(hostNoPort, pattern)) return true;
+    if (hostMatchesSuffix(candidateHost, pattern)) return true;
     // For sitemap/robots host resolution, allow apex host when a wildcard suffix is configured
     // so requests to example.com do not leak platform canonicals when only *.example.com is set.
-    return pattern.allowSubdomains && normHost(hostNoPort) === pattern.suffix;
+    return pattern.allowSubdomains && normHost(candidateHost) === pattern.suffix;
   });
 
-  const isConfiguredHostTrusted = configured.some((entry) => {
+  const isHostTrustedByConfigured = (candidateHost) => configured.some((entry) => {
     if (!entry) return false;
     if (entry === "*") return true;
 
@@ -5913,11 +5903,29 @@ function resolvePublicBaseUrls(req, options = {}) {
 
     const trustedHost = normHost(asUrl.hostname);
     if (!trustedHost) return false;
-    if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
-    return normHost(hostNoPort) === trustedHost;
+    if (trustedHost.startsWith("*.")) return wildcardMatches(candidateHost, trustedHost);
+    return normHost(candidateHost) === trustedHost;
   });
 
-  const isRequestHostTrusted = isExpectedHostTrusted || isConfiguredHostTrusted;
+  const rawHostCandidates = [
+    ...rawForwardedHosts,
+    req.get("x-original-host"),
+    req.get("x-host"),
+    req.get("host"),
+    "localhost"
+  ];
+  const hostCandidates = [...new Set(rawHostCandidates
+    .map((value) => toHostName(value))
+    .filter(Boolean))];
+
+  const hostNoPort = hostCandidates.find((candidateHost) => (
+    isHostTrustedByExpected(candidateHost) || isHostTrustedByConfigured(candidateHost)
+  )) || hostCandidates[0] || "localhost";
+
+  const isRequestHostTrusted = isHostTrustedByExpected(hostNoPort) || isHostTrustedByConfigured(hostNoPort);
+
+  const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
+  const requestBase = hostNoPort ? `${proto}://${hostNoPort}` : `${proto}://localhost`;
 
   const fallbackCanonical = (EXPECT_HOSTNAME_PATTERNS.length > 0)
     ? (firstExpectedCanonical || firstConfiguredCanonical)
