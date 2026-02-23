@@ -5840,18 +5840,18 @@ function isLikelyInternalHostname(hostname) {
   return false;
 }
 
-function parseConfiguredBaseEntry(entry, requestHostWithPort) {
+function parseConfiguredBaseEntry(entry) {
   try {
     if (!entry || entry === "*") return null;
     const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
     const asUrl = new URL(value);
     const wildcard = asUrl.hostname.startsWith("*.");
-    const baseUrl = wildcard
-      ? `${asUrl.protocol}//${requestHostWithPort}`
-      : `${asUrl.protocol}//${asUrl.host}`;
+    const canonicalHost = wildcard ? asUrl.hostname.slice(2) : asUrl.host;
+    const baseUrl = `${asUrl.protocol}//${canonicalHost}`;
 
     return {
       hostname: asUrl.hostname,
+      protocol: asUrl.protocol,
       wildcard,
       baseUrl,
       isInternal: isLikelyInternalHostname(asUrl.hostname)
@@ -5860,6 +5860,7 @@ function parseConfiguredBaseEntry(entry, requestHostWithPort) {
     return null;
   }
 }
+
 
 function resolvePublicBaseUrls(req, options = {}) {
   const rawForwardedHost = String(req.get("x-forwarded-host") || "")
@@ -5881,7 +5882,7 @@ function resolvePublicBaseUrls(req, options = {}) {
 
   const configured = parsePublicBaseUrlEntries();
   const parsedConfigured = configured
-    .map((entry) => parseConfiguredBaseEntry(entry, host))
+    .map((entry) => parseConfiguredBaseEntry(entry))
     .filter(Boolean);
 
   if (requestHostOnly) {
@@ -5889,7 +5890,7 @@ function resolvePublicBaseUrls(req, options = {}) {
       const matchingConfiguredCanonical = parsedConfigured
         .filter((entry) => entry.wildcard ? wildcardMatches(hostNoPort, entry.hostname) : entry.hostname === hostNoPort)
         .sort((a, b) => Number(a.isInternal) - Number(b.isInternal))
-        .map((entry) => entry.baseUrl)
+        .map((entry) => entry.wildcard ? `${entry.protocol}//${host}` : entry.baseUrl)
         .find(Boolean);
 
       if (matchingConfiguredCanonical) {
@@ -5897,7 +5898,11 @@ function resolvePublicBaseUrls(req, options = {}) {
       }
 
       const preferredConfiguredCanonical = parsedConfigured
-        .sort((a, b) => Number(a.isInternal) - Number(b.isInternal))
+        .sort((a, b) => {
+          const internalDiff = Number(a.isInternal) - Number(b.isInternal);
+          if (internalDiff !== 0) return internalDiff;
+          return Number(a.wildcard) - Number(b.wildcard);
+        })
         .map((entry) => entry.baseUrl)
         .find(Boolean);
 
@@ -5917,7 +5922,7 @@ function resolvePublicBaseUrls(req, options = {}) {
   for (const entry of parsedConfigured) {
     if (entry.wildcard) {
       if (wildcardMatches(hostNoPort, entry.hostname)) {
-        out.push(entry.baseUrl);
+        out.push(`${entry.protocol}//${host}`);
       }
       continue;
     }
