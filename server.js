@@ -1957,7 +1957,7 @@ function detectScannerEnhanced(req) {
   return detected.sort((a, b) => b.confidence - a.confidence);
 }
 
-const SCANNER_STATS = { total: 0, byReason: Object.create(null), byUA: Object.create(null) };
+const SCANNER_STATS = { total: 0, byReason: Object.create(null), byReasonCode: Object.create(null), byUA: Object.create(null) };
 
 function computeScannerStatsFromLogs() {
   const byReason = Object.create(null);
@@ -2215,9 +2215,11 @@ function logScannerHit(req, reason, nextEnc) {
   const path = (req.originalUrl || req.path || "").slice(0, PATH_TRUNCATE_LENGTH);
   const ref  = (req.get("referer") || req.get("referrer") || "").slice(0, REFERER_TRUNCATE_LENGTH);
   const acc  = (req.get("accept") || "").slice(0, ACCEPT_TRUNCATE_LENGTH);
+  const reasonCode = toReasonCode(reason);
 
   SCANNER_STATS.total++;
   SCANNER_STATS.byReason[reason] = (SCANNER_STATS.byReason[reason] || 0) + 1;
+  SCANNER_STATS.byReasonCode[reasonCode] = (SCANNER_STATS.byReasonCode[reasonCode] || 0) + 1;
   const uaKey = ua.toLowerCase().split(/[;\s]/)[0] || "(empty)";
   SCANNER_STATS.byUA[uaKey] = (SCANNER_STATS.byUA[uaKey] || 0) + 1;
 
@@ -2232,7 +2234,7 @@ function logScannerHit(req, reason, nextEnc) {
       path
     )} ref=${safeLogValue(ref)} accept=${safeLogValue(acc)} reason=${safeLogValue(
       reason
-    )} nextLen=${(nextEnc || "").length}`
+    )} reasonCode=${safeLogValue(reasonCode)} nextLen=${(nextEnc || "").length}`
   );
   addSpacer();
 }
@@ -2400,6 +2402,28 @@ const INTERSTITIAL_REASON_TEXT = {
   "Known scanner UA": "Known scanner user agent"
 };
 
+const INTERSTITIAL_REASON_CODE_MAP = {
+  "Pre-scan": "pre_scan",
+  "Email-safe path": "email_safe_path",
+  "HEAD-probe": "head_probe",
+  "GET-probe": "get_probe",
+  "OPTIONS-probe": "options_probe",
+  "Known scanner UA": "known_scanner_ua",
+  "Known scanner fingerprint": "known_scanner_fingerprint"
+};
+
+const INTERSTITIAL_REASON_HEADER_ENABLED = (process.env.INTERSTITIAL_REASON_HEADER || "0") === "1";
+
+function toReasonCode(reason) {
+  const key = String(reason || "Pre-scan");
+  if (INTERSTITIAL_REASON_CODE_MAP[key]) return INTERSTITIAL_REASON_CODE_MAP[key];
+  return key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64) || "pre_scan";
+}
+
 function mapInterstitialReason(reason) {
   if (!reason) return "Pre-scan";
   const key = String(reason);
@@ -2474,6 +2498,11 @@ function renderScannerSafePage(req, res, nextEnc, reason = "Pre-scan", options =
   applyScannerCompatHeaders(res);
   if (IMPERSONATE_SCANNER && options.scannerProfile) {
     applyScannerProfileHeaders(res, options.scannerProfile);
+  }
+
+  const reasonCode = toReasonCode(reason);
+  if (INTERSTITIAL_REASON_HEADER_ENABLED && !res.getHeader("X-Interstitial-Reason-Code")) {
+    res.setHeader("X-Interstitial-Reason-Code", reasonCode);
   }
 
   const mappedReason = mapInterstitialReason(reason);
@@ -6065,6 +6094,7 @@ app.get(
     const use = (derived && derived.total > 0) ? derived : {
       total: SCANNER_STATS.total,
       byReason: SCANNER_STATS.byReason,
+      byReasonCode: SCANNER_STATS.byReasonCode,
       byUA: SCANNER_STATS.byUA
     };
 
@@ -6078,6 +6108,7 @@ app.get(
       source: (derived && derived.total > 0) ? "logs" : "counters",
       total: use.total || 0,
       byReason: use.byReason || {},
+      byReasonCode: use.byReasonCode || {},
       topUA,
       now: new Date().toISOString()
     });
@@ -6831,6 +6862,7 @@ function startupSummary() {
     `  • Headless: block=${HEADLESS_BLOCK} hardWeight=${HEADLESS_STRIKE_WEIGHT} softStrike=${HEADLESS_SOFT_STRIKE}`,
     `  • Scanner impersonation: enabled=${IMPERSONATE_SCANNER} strict=${IMPERSONATE_SCANNER_STRICT} minConfidence=${IMPERSONATE_MIN_CONFIDENCE}`,
     `  • Scanner compatibility headers: enabled=${SCANNER_COMPAT_HEADERS_ENABLED}`,
+    `  • Interstitial reason header: enabled=${INTERSTITIAL_REASON_HEADER_ENABLED}`,
     `  • Edge checks: requireCfHeaders=${REQUIRE_CF_HEADERS}`,
     `  • RateLimit: capacity=${RATE_CAPACITY}/window=${RATE_WINDOW_SECONDS}s`,
     `  • Bans: ttl=${BAN_TTL_SEC}s threshold=${BAN_AFTER_STRIKES} hpWeight=${STRIKE_WEIGHT_HP}`,
