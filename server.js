@@ -5862,32 +5862,52 @@ function resolvePublicBaseUrls(req, options = {}) {
     })
     .find(Boolean);
 
-  const isRequestHostTrusted = configured.some((entry) => {
-    if (!entry) return false;
-    if (entry === "*") return true;
+  const firstExpectedCanonical = EXPECT_HOSTNAME_PATTERNS
+    .map((pattern) => {
+      if (!pattern || !pattern.suffix) return null;
+      return `https://${pattern.suffix}`;
+    })
+    .find(Boolean);
 
-    const asUrl = (() => {
-      try {
-        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-        return new URL(value);
-      } catch {
-        return null;
-      }
-    })();
+  const isRequestHostTrusted = (EXPECT_HOSTNAME_PATTERNS.length > 0)
+    ? EXPECT_HOSTNAME_PATTERNS.some((pattern) => hostMatchesSuffix(hostNoPort, pattern))
+    : configured.some((entry) => {
+      if (!entry) return false;
+      if (entry === "*") return true;
 
-    if (!asUrl) return false;
+      const asUrl = (() => {
+        try {
+          const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+          return new URL(value);
+        } catch {
+          return null;
+        }
+      })();
 
-    const trustedHost = normHost(asUrl.hostname);
-    if (!trustedHost) return false;
-    if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
-    return normHost(hostNoPort) === trustedHost;
-  });
+      if (!asUrl) return false;
+
+      const trustedHost = normHost(asUrl.hostname);
+      if (!trustedHost) return false;
+      if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
+      return normHost(hostNoPort) === trustedHost;
+    });
+
+  const fallbackCanonical = firstExpectedCanonical || firstConfiguredCanonical;
 
   if (requestHostOnly) {
-    if (preferConfiguredCanonical || !isRequestHostTrusted) {
-      if (firstConfiguredCanonical) {
-        return [firstConfiguredCanonical];
+    if (preferConfiguredCanonical) {
+      if (fallbackCanonical) {
+        return [fallbackCanonical];
       }
+      return [requestBase];
+    }
+
+    if (isRequestHostTrusted) {
+      return [requestBase];
+    }
+
+    if (fallbackCanonical) {
+      return [fallbackCanonical];
     }
 
     return [requestBase];
