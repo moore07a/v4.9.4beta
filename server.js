@@ -3076,7 +3076,7 @@ app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 const PUBLIC_CONTENT_SURFACE = (process.env.PUBLIC_CONTENT_SURFACE || "0") === "1";
 const PUBLIC_SITE_PERSONA = (process.env.PUBLIC_SITE_PERSONA || "rotating").toLowerCase();
 const PUBLIC_SITE_NAME_OVERRIDE = (process.env.PUBLIC_SITE_NAME || "").trim();
-const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL || "").trim();
+const PUBLIC_SITE_BASE_URL = (process.env.TURNSTILE_EXPECT_HOSTNAME || "").trim();
 const PUBLIC_ROTATION_MODE = (process.env.PUBLIC_ROTATION_MODE || "daily").trim().toLowerCase();
 const PUBLIC_GENERATE_PATHS = parseInt(process.env.PUBLIC_GENERATE_PATHS || "25", 10);
 const PUBLIC_ENABLE_ANALYTICS = (process.env.PUBLIC_ENABLE_ANALYTICS || "1") === "1";
