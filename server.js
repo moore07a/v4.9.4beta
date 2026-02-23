@@ -1500,7 +1500,7 @@ function getASN(req) {
 const ALLOWED_COUNTRIES = (process.env.ALLOWED_COUNTRIES || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const BLOCKED_COUNTRIES = (process.env.BLOCKED_COUNTRIES || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const BLOCKED_ASNS      = (process.env.BLOCKED_ASNS || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
-const EXPECT_HOSTNAME   = process.env.TURNSTILE_EXPECT_HOSTNAME || ".test.com,test.com,sub.test.com"; // main url
+const EXPECT_HOSTNAME   = process.env.TURNSTILE_EXPECT_HOSTNAME || "test.com,*.test.com"; // main url
 const MAX_TOKEN_AGE_SEC = parseInt(process.env.TURNSTILE_MAX_TOKEN_AGE_SEC || "90", 10);
 const ENFORCE_ACTION    = (process.env.TURNSTILE_ENFORCE_ACTION || "1") === "1";
 const HEADLESS_BLOCK    = (process.env.HEADLESS_BLOCK || "0") === "1";
@@ -1509,6 +1509,16 @@ const HEADLESS_SOFT_STRIKE   = (process.env.HEADLESS_SOFT_STRIKE || "0") === "1"
 
 const ALLOWLIST_DOMAINS = (process.env.ALLOWLIST_DOMAINS || "test2.com,sub.test2.com") // landing
   .split(",").map(normalizeSuffixPattern).filter(Boolean);
+
+const EXPECT_HOSTNAME_ENTRIES = (EXPECT_HOSTNAME || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+const EXPECT_HOSTNAME_INVALID_ENTRIES = EXPECT_HOSTNAME_ENTRIES
+  .filter(raw => !normalizeSuffixPattern(raw));
+const EXPECT_HOSTNAME_PATTERNS = EXPECT_HOSTNAME_ENTRIES
+  .map(normalizeSuffixPattern)
+  .filter(Boolean);
 
 // ================== CONFIGURATION VALIDATION ==================
 const normalizeTurnstileEnv = (value) => String(value || "").trim();
@@ -1536,6 +1546,13 @@ function validateConfig() {
   // Validate allowlist configuration
   if (ALLOWLIST_DOMAINS.length === 0) {
     warnings.push("No allowlist domains configured - all redirects will be blocked unless explicitly allowed");
+  }
+
+  if (EXPECT_HOSTNAME_INVALID_ENTRIES.length > 0) {
+    errors.push(`Invalid TURNSTILE_EXPECT_HOSTNAME pattern(s): ${EXPECT_HOSTNAME_INVALID_ENTRIES.join(",")}`);
+  }
+  if (EXPECT_HOSTNAME_ENTRIES.length > 0 && EXPECT_HOSTNAME_PATTERNS.length === 0) {
+    errors.push("TURNSTILE_EXPECT_HOSTNAME does not contain any valid host pattern");
   }
 
   // Validate TURNSTILE credentials format
@@ -1593,11 +1610,6 @@ if (process.env.NODE_ENV === "production" && (!ADMIN_TOKEN || ADMIN_TOKEN.length
   console.error("❌ ADMIN_TOKEN must be set with at least 16 characters in production.");
   process.exit(1);
 }
-
-const EXPECT_HOSTNAME_LIST   = (EXPECT_HOSTNAME || "")
-  .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-const EXPECT_HOSTNAME_EXACT  = new Set(EXPECT_HOSTNAME_LIST.filter(h => !h.startsWith(".")));
-const EXPECT_HOSTNAME_SUFFIX = EXPECT_HOSTNAME_LIST.filter(h => h.startsWith("."));
 
 function countryBlocked(country){
   if (!country) return false;
@@ -2336,26 +2348,26 @@ async function verifyTurnstileToken(token, remoteip, expected) {
       if (age > (expected.maxAgeSec||MAX_TOKEN_AGE_SEC)) return { ok:false, reason:"token_too_old", data, age };
     }
 
-    if (EXPECT_HOSTNAME_LIST.length && data.hostname) {
+    if (EXPECT_HOSTNAME_ENTRIES.length && !EXPECT_HOSTNAME_PATTERNS.length) {
+      addLog(`[TS-HOST-CONFIG-ERROR] TURNSTILE_EXPECT_HOSTNAME has no valid patterns raw=[${EXPECT_HOSTNAME_ENTRIES.join(",")}]`);
+      return { ok:false, reason:"bad_hostname_config" };
+    }
+
+    if (EXPECT_HOSTNAME_PATTERNS.length && data.hostname) {
       const got = normHost(data.hostname);
-      const matched =
-        EXPECT_HOSTNAME_EXACT.has(got) ||
-        EXPECT_HOSTNAME_SUFFIX.some(s => got.endsWith(s));
+      const matched = EXPECT_HOSTNAME_PATTERNS.some(pattern => hostMatchesSuffix(got, pattern));
 
       if (!matched) {
-        addLog(`[TS-HOST-MISMATCH] got=${got} expectExact=[${[...EXPECT_HOSTNAME_EXACT].join(",")||"-"}] expectSuffix=[${EXPECT_HOSTNAME_SUFFIX.join(",")||"-"}]`);
+        const expected = EXPECT_HOSTNAME_PATTERNS
+          .map(p => (p.allowSubdomains ? `*.${p.suffix}` : p.suffix))
+          .join(",") || "-";
+        addLog(`[TS-HOST-MISMATCH] got=${got} expected=[${expected}]`);
         addSpacer();
         data.hostname = got;
         return { ok:false, reason:"bad_hostname", data };
       }
 
       data.hostname = got;
-    }
-
-    if (EXPECT_HOSTNAME && !EXPECT_HOSTNAME.includes(",") && !EXPECT_HOSTNAME.trim().startsWith(".") && data.hostname && data.hostname !== EXPECT_HOSTNAME) {
-      addLog(`[TS-HOST-MISMATCH-LEGACY] got=${data.hostname} expect=${EXPECT_HOSTNAME}`);
-      addSpacer();
-      return { ok:false, reason:"bad_hostname", data };
     }
 
     addLog(`[TS] ok action=${data.action||'-'} hostname=${data.hostname||'-'} cdata=${String(data.cdata||'').slice(0,12)}…`);
@@ -6789,7 +6801,7 @@ function startupSummary() {
     "🛡️ Security profile",
     `[KEY] Loaded ${AES_KEYS.length} AES key(s): ${keyPrints}`,
     `  • Time: zone=${zoneLabel()}`,
-    `  • Turnstile: enforceAction=${ENFORCE_ACTION} maxAgeSec=${MAX_TOKEN_AGE_SEC} expectHost=${EXPECT_HOSTNAME || "-"}`,
+    `  • Turnstile: enforceAction=${ENFORCE_ACTION} maxAgeSec=${MAX_TOKEN_AGE_SEC} expectHost=[${EXPECT_HOSTNAME_PATTERNS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
     `  • Turnstile sitekey=${mask(TURNSTILE_SITEKEY)} secret=${mask(TURNSTILE_SECRET)}`,
     `  • Geo: allow=[${ALLOWED_COUNTRIES.join(",")||"-"}] block=[${BLOCKED_COUNTRIES.join(",")||"-"}] asn=[${BLOCKED_ASNS.join(",")||"-"}]`,
     `  • Headless: block=${HEADLESS_BLOCK} hardWeight=${HEADLESS_STRIKE_WEIGHT} softStrike=${HEADLESS_SOFT_STRIKE}`,
