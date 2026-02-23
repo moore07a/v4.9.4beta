@@ -5097,7 +5097,7 @@ function generateDummyAPIResponse(path, persona, seed) {
 
 // ================== DUMMY SITEMAP GENERATOR ==================
 function generateEnhancedSitemap(req, persona, allPaths) {
-  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
+  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
   const today = new Date().toISOString().split('T')[0];
   
   const urlEntries = [];
@@ -5287,7 +5287,7 @@ app.get("/api/v1/status", (req, res) => {
   
   // ===== SITEMAP =====
 app.get("/sitemap.xml", (req, res) => {
-  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
+  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
   const today = new Date().toISOString().split('T')[0];
   
   // Generate ALL paths from your persona
@@ -5339,7 +5339,7 @@ app.get("/sitemap.xml", (req, res) => {
   
   // ===== ROBOTS.TXT =====
   app.get('/robots.txt', (req, res) => {
-    const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
+    const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
     const sitemapUrl = `${baseUrls[0]}/sitemap.xml`;
     
     const robots = `User-agent: *
@@ -5849,21 +5849,42 @@ function resolvePublicBaseUrls(req, options = {}) {
 
   const configured = parsePublicBaseUrlEntries();
 
-  if (requestHostOnly) {
-    if (preferConfiguredCanonical) {
-      const firstConfiguredCanonical = configured
-        .map((entry) => {
-          try {
-            if (!entry || entry === "*" || entry.startsWith("*.")) return null;
-            const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-            const asUrl = new URL(value);
-            return `${asUrl.protocol}//${asUrl.host}`;
-          } catch {
-            return null;
-          }
-        })
-        .find(Boolean);
+  const firstConfiguredCanonical = configured
+    .map((entry) => {
+      try {
+        if (!entry || entry === "*" || entry.startsWith("*.")) return null;
+        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+        const asUrl = new URL(value);
+        return `${asUrl.protocol}//${asUrl.host}`;
+      } catch {
+        return null;
+      }
+    })
+    .find(Boolean);
 
+  const isRequestHostTrusted = configured.some((entry) => {
+    if (!entry) return false;
+    if (entry === "*") return true;
+
+    const asUrl = (() => {
+      try {
+        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+        return new URL(value);
+      } catch {
+        return null;
+      }
+    })();
+
+    if (!asUrl) return false;
+
+    const trustedHost = normHost(asUrl.hostname);
+    if (!trustedHost) return false;
+    if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
+    return normHost(hostNoPort) === trustedHost;
+  });
+
+  if (requestHostOnly) {
+    if (preferConfiguredCanonical || !isRequestHostTrusted) {
       if (firstConfiguredCanonical) {
         return [firstConfiguredCanonical];
       }
