@@ -5852,21 +5852,30 @@ function resolvePublicBaseUrls(req, options = {}) {
 
   if (requestHostOnly) {
     if (preferConfiguredCanonical) {
-      const firstConfiguredCanonical = configured
+      const matchingConfiguredCanonical = configured
         .map((entry) => {
           try {
-            if (!entry || entry === "*" || entry.startsWith("*.")) return null;
+            if (!entry || entry === "*") return null;
             const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
             const asUrl = new URL(value);
-            return `${asUrl.protocol}//${asUrl.host}`;
+
+            if (asUrl.hostname.startsWith("*.")) {
+              return wildcardMatches(hostNoPort, asUrl.hostname)
+                ? `${asUrl.protocol}//${host}`
+                : null;
+            }
+
+            return asUrl.hostname === hostNoPort
+              ? `${asUrl.protocol}//${asUrl.host}`
+              : null;
           } catch {
             return null;
           }
         })
         .find(Boolean);
 
-      if (firstConfiguredCanonical) {
-        return [firstConfiguredCanonical];
+      if (matchingConfiguredCanonical) {
+        return [matchingConfiguredCanonical];
       }
     }
 
