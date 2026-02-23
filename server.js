@@ -5097,7 +5097,7 @@ function generateDummyAPIResponse(path, persona, seed) {
 
 // ================== DUMMY SITEMAP GENERATOR ==================
 function generateEnhancedSitemap(req, persona, allPaths) {
-  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
+  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
   const today = new Date().toISOString().split('T')[0];
   
   const urlEntries = [];
@@ -5287,7 +5287,7 @@ app.get("/api/v1/status", (req, res) => {
   
   // ===== SITEMAP =====
 app.get("/sitemap.xml", (req, res) => {
-  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
+  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
   const today = new Date().toISOString().split('T')[0];
   
   // Generate ALL paths from your persona
@@ -5339,7 +5339,7 @@ app.get("/sitemap.xml", (req, res) => {
   
   // ===== ROBOTS.TXT =====
   app.get('/robots.txt', (req, res) => {
-    const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
+    const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
     const sitemapUrl = `${baseUrls[0]}/sitemap.xml`;
     
     const robots = `User-agent: *
@@ -5841,32 +5841,98 @@ function resolvePublicBaseUrls(req, options = {}) {
     req.get("host") ||
     "localhost"
   ).trim();
-  const hostNoPort = host.split(":")[0];
+  const toHostName = (rawHost) => {
+    const value = String(rawHost || "").trim();
+    if (!value) return "";
+
+    const asUrl = (() => {
+      try {
+        if (/^https?:\/\//i.test(value)) return new URL(value);
+        return null;
+      } catch {
+        return null;
+      }
+    })();
+
+    if (asUrl && asUrl.hostname) return normHost(asUrl.hostname);
+
+    const withoutPath = value.split("/")[0].trim();
+    return normHost(withoutPath);
+  };
+
+  const hostNoPort = toHostName(host);
   const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
-  const requestBase = `${proto}://${host}`;
+  const requestBase = hostNoPort ? `${proto}://${hostNoPort}` : `${proto}://localhost`;
   const requestHostOnly = options && options.requestHostOnly === true;
   const preferConfiguredCanonical = options && options.preferConfiguredCanonical === true;
 
   const configured = parsePublicBaseUrlEntries();
 
+  const firstConfiguredCanonical = configured
+    .map((entry) => {
+      try {
+        if (!entry || entry === "*" || entry.startsWith("*.")) return null;
+        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+        const asUrl = new URL(value);
+        return `${asUrl.protocol}//${asUrl.host}`;
+      } catch {
+        return null;
+      }
+    })
+    .find(Boolean);
+
+  const firstExpectedCanonical = EXPECT_HOSTNAME_PATTERNS
+    .map((pattern) => {
+      if (!pattern || !pattern.suffix || !pattern.includeApex) return null;
+      return `https://${pattern.suffix}`;
+    })
+    .find(Boolean);
+
+  const isRequestHostTrusted = (EXPECT_HOSTNAME_PATTERNS.length > 0)
+    ? EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
+      if (!pattern || !pattern.suffix) return false;
+      if (hostMatchesSuffix(hostNoPort, pattern)) return true;
+      // For sitemap/robots host resolution, allow apex host when a wildcard suffix is configured
+      // so requests to example.com do not leak platform canonicals when only *.example.com is set.
+      return pattern.allowSubdomains && normHost(hostNoPort) === pattern.suffix;
+    })
+    : configured.some((entry) => {
+      if (!entry) return false;
+      if (entry === "*") return true;
+
+      const asUrl = (() => {
+        try {
+          const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+          return new URL(value);
+        } catch {
+          return null;
+        }
+      })();
+
+      if (!asUrl) return false;
+
+      const trustedHost = normHost(asUrl.hostname);
+      if (!trustedHost) return false;
+      if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
+      return normHost(hostNoPort) === trustedHost;
+    });
+
+  const fallbackCanonical = firstConfiguredCanonical || firstExpectedCanonical;
+
   if (requestHostOnly) {
     if (preferConfiguredCanonical) {
-      const firstConfiguredCanonical = configured
-        .map((entry) => {
-          try {
-            if (!entry || entry === "*" || entry.startsWith("*.")) return null;
-            const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-            const asUrl = new URL(value);
-            return `${asUrl.protocol}//${asUrl.host}`;
-          } catch {
-            return null;
-          }
-        })
-        .find(Boolean);
-
-      if (firstConfiguredCanonical) {
-        return [firstConfiguredCanonical];
+      if (fallbackCanonical) {
+        return [fallbackCanonical];
       }
+      return [requestBase];
+    }
+
+    if (isRequestHostTrusted) {
+      return [requestBase];
+    }
+
+    if (fallbackCanonical) {
+      return [fallbackCanonical];
     }
 
     return [requestBase];
@@ -5897,7 +5963,7 @@ function resolvePublicBaseUrls(req, options = {}) {
     const wildcardHost = asUrl.hostname;
     if (wildcardHost.startsWith("*.")) {
       if (wildcardMatches(hostNoPort, wildcardHost)) {
-        out.push(`${asUrl.protocol}//${host}`);
+        out.push(`${asUrl.protocol}//${hostNoPort}`);
       }
       continue;
     }
