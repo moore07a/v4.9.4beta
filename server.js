@@ -1500,7 +1500,7 @@ function getASN(req) {
 const ALLOWED_COUNTRIES = (process.env.ALLOWED_COUNTRIES || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const BLOCKED_COUNTRIES = (process.env.BLOCKED_COUNTRIES || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const BLOCKED_ASNS      = (process.env.BLOCKED_ASNS || "").split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
-const EXPECT_HOSTNAME   = process.env.TURNSTILE_EXPECT_HOSTNAME || "test.com,sub.test.com,*.test.com"; // main url
+const EXPECT_HOSTNAME   = process.env.TURNSTILE_EXPECT_HOSTNAME || ".test.com,test.com,sub.test.com"; // main url
 const MAX_TOKEN_AGE_SEC = parseInt(process.env.TURNSTILE_MAX_TOKEN_AGE_SEC || "90", 10);
 const ENFORCE_ACTION    = (process.env.TURNSTILE_ENFORCE_ACTION || "1") === "1";
 const HEADLESS_BLOCK    = (process.env.HEADLESS_BLOCK || "0") === "1";
@@ -1509,22 +1509,6 @@ const HEADLESS_SOFT_STRIKE   = (process.env.HEADLESS_SOFT_STRIKE || "0") === "1"
 
 const ALLOWLIST_DOMAINS = (process.env.ALLOWLIST_DOMAINS || "test2.com,sub.test2.com") // landing
   .split(",").map(normalizeSuffixPattern).filter(Boolean);
-
-const EXPECT_HOSTNAME_RAW_ENTRIES = (EXPECT_HOSTNAME || "")
-  .split(",")
-  .map((entry) => entry.trim())
-  .filter(Boolean);
-
-const EXPECT_HOSTNAME_PATTERNS = [];
-const EXPECT_HOSTNAME_INVALID_ENTRIES = [];
-for (const entry of EXPECT_HOSTNAME_RAW_ENTRIES) {
-  const parsed = normalizeSuffixPattern(entry);
-  if (parsed) {
-    EXPECT_HOSTNAME_PATTERNS.push(parsed);
-  } else {
-    EXPECT_HOSTNAME_INVALID_ENTRIES.push(entry);
-  }
-}
 
 // ================== CONFIGURATION VALIDATION ==================
 const normalizeTurnstileEnv = (value) => String(value || "").trim();
@@ -1552,13 +1536,6 @@ function validateConfig() {
   // Validate allowlist configuration
   if (ALLOWLIST_DOMAINS.length === 0) {
     warnings.push("No allowlist domains configured - all redirects will be blocked unless explicitly allowed");
-  }
-
-  if (EXPECT_HOSTNAME_INVALID_ENTRIES.length > 0) {
-    errors.push(`Invalid TURNSTILE_EXPECT_HOSTNAME entries: ${EXPECT_HOSTNAME_INVALID_ENTRIES.join(",")}`);
-  }
-  if (EXPECT_HOSTNAME_RAW_ENTRIES.length > 0 && EXPECT_HOSTNAME_PATTERNS.length === 0) {
-    errors.push("TURNSTILE_EXPECT_HOSTNAME contains no valid hostname patterns");
   }
 
   // Validate TURNSTILE credentials format
@@ -1616,6 +1593,11 @@ if (process.env.NODE_ENV === "production" && (!ADMIN_TOKEN || ADMIN_TOKEN.length
   console.error("❌ ADMIN_TOKEN must be set with at least 16 characters in production.");
   process.exit(1);
 }
+
+const EXPECT_HOSTNAME_LIST   = (EXPECT_HOSTNAME || "")
+  .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+const EXPECT_HOSTNAME_EXACT  = new Set(EXPECT_HOSTNAME_LIST.filter(h => !h.startsWith(".")));
+const EXPECT_HOSTNAME_SUFFIX = EXPECT_HOSTNAME_LIST.filter(h => h.startsWith("."));
 
 function countryBlocked(country){
   if (!country) return false;
@@ -2354,19 +2336,26 @@ async function verifyTurnstileToken(token, remoteip, expected) {
       if (age > (expected.maxAgeSec||MAX_TOKEN_AGE_SEC)) return { ok:false, reason:"token_too_old", data, age };
     }
 
-    if (EXPECT_HOSTNAME_RAW_ENTRIES.length && data.hostname) {
+    if (EXPECT_HOSTNAME_LIST.length && data.hostname) {
       const got = normHost(data.hostname);
-      const matched = EXPECT_HOSTNAME_PATTERNS.some((pattern) => hostMatchesSuffix(got, pattern));
+      const matched =
+        EXPECT_HOSTNAME_EXACT.has(got) ||
+        EXPECT_HOSTNAME_SUFFIX.some(s => got.endsWith(s));
 
       if (!matched) {
-        const expected = EXPECT_HOSTNAME_RAW_ENTRIES.join(",") || "-";
-        addLog(`[TS-HOST-MISMATCH] got=${got} expected=[${expected}]`);
+        addLog(`[TS-HOST-MISMATCH] got=${got} expectExact=[${[...EXPECT_HOSTNAME_EXACT].join(",")||"-"}] expectSuffix=[${EXPECT_HOSTNAME_SUFFIX.join(",")||"-"}]`);
         addSpacer();
         data.hostname = got;
         return { ok:false, reason:"bad_hostname", data };
       }
 
       data.hostname = got;
+    }
+
+    if (EXPECT_HOSTNAME && !EXPECT_HOSTNAME.includes(",") && !EXPECT_HOSTNAME.trim().startsWith(".") && data.hostname && data.hostname !== EXPECT_HOSTNAME) {
+      addLog(`[TS-HOST-MISMATCH-LEGACY] got=${data.hostname} expect=${EXPECT_HOSTNAME}`);
+      addSpacer();
+      return { ok:false, reason:"bad_hostname", data };
     }
 
     addLog(`[TS] ok action=${data.action||'-'} hostname=${data.hostname||'-'} cdata=${String(data.cdata||'').slice(0,12)}…`);
@@ -5097,7 +5086,7 @@ function generateDummyAPIResponse(path, persona, seed) {
 
 // ================== DUMMY SITEMAP GENERATOR ==================
 function generateEnhancedSitemap(req, persona, allPaths) {
-  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
+  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
   const today = new Date().toISOString().split('T')[0];
   
   const urlEntries = [];
@@ -5287,7 +5276,7 @@ app.get("/api/v1/status", (req, res) => {
   
   // ===== SITEMAP =====
 app.get("/sitemap.xml", (req, res) => {
-  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
+  const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
   const today = new Date().toISOString().split('T')[0];
   
   // Generate ALL paths from your persona
@@ -5339,7 +5328,7 @@ app.get("/sitemap.xml", (req, res) => {
   
   // ===== ROBOTS.TXT =====
   app.get('/robots.txt', (req, res) => {
-    const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true });
+    const baseUrls = resolvePublicBaseUrls(req, { requestHostOnly: true, preferConfiguredCanonical: true });
     const sitemapUrl = `${baseUrls[0]}/sitemap.xml`;
     
     const robots = `User-agent: *
@@ -5830,121 +5819,43 @@ function wildcardMatches(hostname, wildcardPattern) {
 }
 
 function resolvePublicBaseUrls(req, options = {}) {
-  const rawForwardedHosts = String(req.get("x-forwarded-host") || "")
+  const rawForwardedHost = String(req.get("x-forwarded-host") || "")
     .split(",")
     .map((part) => part.trim())
-    .filter(Boolean);
-  const toHostName = (rawHost) => {
-    const value = String(rawHost || "").trim();
-    if (!value) return "";
-
-    const asUrl = (() => {
-      try {
-        if (/^https?:\/\//i.test(value)) return new URL(value);
-        return null;
-      } catch {
-        return null;
-      }
-    })();
-
-    if (asUrl && asUrl.hostname) return normHost(asUrl.hostname);
-
-    const withoutPath = value.split("/")[0].trim();
-    return normHost(withoutPath);
-  };
-
+    .find(Boolean);
+  const host = String(
+    rawForwardedHost ||
+    req.get("x-original-host") ||
+    req.get("x-host") ||
+    req.get("host") ||
+    "localhost"
+  ).trim();
+  const hostNoPort = host.split(":")[0];
+  const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
+  const requestBase = `${proto}://${host}`;
   const requestHostOnly = options && options.requestHostOnly === true;
   const preferConfiguredCanonical = options && options.preferConfiguredCanonical === true;
 
   const configured = parsePublicBaseUrlEntries();
 
-  const firstConfiguredCanonical = configured
-    .map((entry) => {
-      try {
-        if (!entry || entry === "*" || entry.startsWith("*.")) return null;
-        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-        const asUrl = new URL(value);
-        return `${asUrl.protocol}//${asUrl.host}`;
-      } catch {
-        return null;
-      }
-    })
-    .find(Boolean);
-
-  const firstExpectedCanonical = EXPECT_HOSTNAME_PATTERNS
-    .map((pattern) => {
-      if (!pattern || !pattern.suffix || !pattern.includeApex) return null;
-      return `https://${pattern.suffix}`;
-    })
-    .find(Boolean);
-
-  const isHostTrustedByExpected = (candidateHost) => EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
-    if (!pattern || !pattern.suffix) return false;
-    if (hostMatchesSuffix(candidateHost, pattern)) return true;
-    // For sitemap/robots host resolution, allow apex host when a wildcard suffix is configured
-    // so requests to example.com do not leak platform canonicals when only *.example.com is set.
-    return pattern.allowSubdomains && normHost(candidateHost) === pattern.suffix;
-  });
-
-  const isHostTrustedByConfigured = (candidateHost) => configured.some((entry) => {
-    if (!entry) return false;
-    if (entry === "*") return true;
-
-    const asUrl = (() => {
-      try {
-        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-        return new URL(value);
-      } catch {
-        return null;
-      }
-    })();
-
-    if (!asUrl) return false;
-
-    const trustedHost = normHost(asUrl.hostname);
-    if (!trustedHost) return false;
-    if (trustedHost.startsWith("*.")) return wildcardMatches(candidateHost, trustedHost);
-    return normHost(candidateHost) === trustedHost;
-  });
-
-  const rawHostCandidates = [
-    ...rawForwardedHosts,
-    req.get("x-original-host"),
-    req.get("x-host"),
-    req.get("host"),
-    "localhost"
-  ];
-  const hostCandidates = [...new Set(rawHostCandidates
-    .map((value) => toHostName(value))
-    .filter(Boolean))];
-
-  const hostNoPort = hostCandidates.find((candidateHost) => (
-    isHostTrustedByExpected(candidateHost) || isHostTrustedByConfigured(candidateHost)
-  )) || hostCandidates[0] || "localhost";
-
-  const isRequestHostTrusted = isHostTrustedByExpected(hostNoPort) || isHostTrustedByConfigured(hostNoPort);
-
-  const proto = req.secure || String(req.get("x-forwarded-proto") || "").includes("https") ? "https" : "http";
-  const requestBase = hostNoPort ? `${proto}://${hostNoPort}` : `${proto}://localhost`;
-
-  const fallbackCanonical = (EXPECT_HOSTNAME_PATTERNS.length > 0)
-    ? (firstExpectedCanonical || firstConfiguredCanonical)
-    : (firstConfiguredCanonical || firstExpectedCanonical);
-
   if (requestHostOnly) {
     if (preferConfiguredCanonical) {
-      if (fallbackCanonical) {
-        return [fallbackCanonical];
+      const firstConfiguredCanonical = configured
+        .map((entry) => {
+          try {
+            if (!entry || entry === "*" || entry.startsWith("*.")) return null;
+            const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+            const asUrl = new URL(value);
+            return `${asUrl.protocol}//${asUrl.host}`;
+          } catch {
+            return null;
+          }
+        })
+        .find(Boolean);
+
+      if (firstConfiguredCanonical) {
+        return [firstConfiguredCanonical];
       }
-      return [requestBase];
-    }
-
-    if (isRequestHostTrusted) {
-      return [requestBase];
-    }
-
-    if (fallbackCanonical) {
-      return [fallbackCanonical];
     }
 
     return [requestBase];
@@ -5975,7 +5886,7 @@ function resolvePublicBaseUrls(req, options = {}) {
     const wildcardHost = asUrl.hostname;
     if (wildcardHost.startsWith("*.")) {
       if (wildcardMatches(hostNoPort, wildcardHost)) {
-        out.push(`${asUrl.protocol}//${hostNoPort}`);
+        out.push(`${asUrl.protocol}//${host}`);
       }
       continue;
     }
@@ -5988,19 +5899,9 @@ function resolvePublicBaseUrls(req, options = {}) {
 }
 
 function parsePublicBaseUrlEntries() {
-  const explicitEntries = PUBLIC_SITE_BASE_URL
+  return PUBLIC_SITE_BASE_URL
     .split(",")
     .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  if (explicitEntries.length > 0) return explicitEntries;
-
-  return EXPECT_HOSTNAME_PATTERNS
-    .map((pattern) => {
-      if (!pattern || !pattern.suffix) return null;
-      if (pattern.allowSubdomains && !pattern.includeApex) return `*.${pattern.suffix}`;
-      return pattern.suffix;
-    })
     .filter(Boolean);
 }
 
