@@ -5845,10 +5845,9 @@ function resolvePublicBaseUrls(req, options = {}) {
     const value = String(rawHost || "").trim();
     if (!value) return "";
 
-    const withoutPath = value.split("/")[0].trim();
     const asUrl = (() => {
       try {
-        if (/^https?:\/\//i.test(withoutPath)) return new URL(withoutPath);
+        if (/^https?:\/\//i.test(value)) return new URL(value);
         return null;
       } catch {
         return null;
@@ -5856,6 +5855,8 @@ function resolvePublicBaseUrls(req, options = {}) {
     })();
 
     if (asUrl && asUrl.hostname) return normHost(asUrl.hostname);
+
+    const withoutPath = value.split("/")[0].trim();
     return normHost(withoutPath);
   };
 
