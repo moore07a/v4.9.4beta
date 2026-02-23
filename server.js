@@ -5889,7 +5889,13 @@ function resolvePublicBaseUrls(req, options = {}) {
     .find(Boolean);
 
   const isRequestHostTrusted = (EXPECT_HOSTNAME_PATTERNS.length > 0)
-    ? EXPECT_HOSTNAME_PATTERNS.some((pattern) => hostMatchesSuffix(hostNoPort, pattern))
+    ? EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
+      if (!pattern || !pattern.suffix) return false;
+      if (hostMatchesSuffix(hostNoPort, pattern)) return true;
+      // For sitemap/robots host resolution, allow apex host when a wildcard suffix is configured
+      // so requests to example.com do not leak platform canonicals when only *.example.com is set.
+      return pattern.allowSubdomains && normHost(hostNoPort) === pattern.suffix;
+    })
     : configured.some((entry) => {
       if (!entry) return false;
       if (entry === "*") return true;
