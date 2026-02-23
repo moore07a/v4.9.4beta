@@ -5917,7 +5917,7 @@ function resolvePublicBaseUrls(req, options = {}) {
       return normHost(hostNoPort) === trustedHost;
     });
 
-  const fallbackCanonical = firstExpectedCanonical || firstConfiguredCanonical;
+  const fallbackCanonical = firstConfiguredCanonical || firstExpectedCanonical;
 
   if (requestHostOnly) {
     if (preferConfiguredCanonical) {
