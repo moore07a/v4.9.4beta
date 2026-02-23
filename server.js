@@ -1510,6 +1510,16 @@ const HEADLESS_SOFT_STRIKE   = (process.env.HEADLESS_SOFT_STRIKE || "0") === "1"
 const ALLOWLIST_DOMAINS = (process.env.ALLOWLIST_DOMAINS || "test2.com,sub.test2.com") // landing
   .split(",").map(normalizeSuffixPattern).filter(Boolean);
 
+const EXPECT_HOSTNAME_ENTRIES = (EXPECT_HOSTNAME || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+const EXPECT_HOSTNAME_INVALID_ENTRIES = EXPECT_HOSTNAME_ENTRIES
+  .filter(raw => !normalizeSuffixPattern(raw));
+const EXPECT_HOSTNAME_PATTERNS = EXPECT_HOSTNAME_ENTRIES
+  .map(normalizeSuffixPattern)
+  .filter(Boolean);
+
 // ================== CONFIGURATION VALIDATION ==================
 const normalizeTurnstileEnv = (value) => String(value || "").trim();
 
@@ -1536,6 +1546,13 @@ function validateConfig() {
   // Validate allowlist configuration
   if (ALLOWLIST_DOMAINS.length === 0) {
     warnings.push("No allowlist domains configured - all redirects will be blocked unless explicitly allowed");
+  }
+
+  if (EXPECT_HOSTNAME_INVALID_ENTRIES.length > 0) {
+    errors.push(`Invalid TURNSTILE_EXPECT_HOSTNAME pattern(s): ${EXPECT_HOSTNAME_INVALID_ENTRIES.join(",")}`);
+  }
+  if (EXPECT_HOSTNAME_ENTRIES.length > 0 && EXPECT_HOSTNAME_PATTERNS.length === 0) {
+    errors.push("TURNSTILE_EXPECT_HOSTNAME does not contain any valid host pattern");
   }
 
   // Validate TURNSTILE credentials format
@@ -1593,11 +1610,6 @@ if (process.env.NODE_ENV === "production" && (!ADMIN_TOKEN || ADMIN_TOKEN.length
   console.error("❌ ADMIN_TOKEN must be set with at least 16 characters in production.");
   process.exit(1);
 }
-
-const EXPECT_HOSTNAME_PATTERNS = (EXPECT_HOSTNAME || "")
-  .split(",")
-  .map(normalizeSuffixPattern)
-  .filter(Boolean);
 
 function countryBlocked(country){
   if (!country) return false;
@@ -2334,6 +2346,11 @@ async function verifyTurnstileToken(token, remoteip, expected) {
         return { ok:false, reason:"bad_cdata_hash", data };
       }
       if (age > (expected.maxAgeSec||MAX_TOKEN_AGE_SEC)) return { ok:false, reason:"token_too_old", data, age };
+    }
+
+    if (EXPECT_HOSTNAME_ENTRIES.length && !EXPECT_HOSTNAME_PATTERNS.length) {
+      addLog(`[TS-HOST-CONFIG-ERROR] TURNSTILE_EXPECT_HOSTNAME has no valid patterns raw=[${EXPECT_HOSTNAME_ENTRIES.join(",")}]`);
+      return { ok:false, reason:"bad_hostname_config" };
     }
 
     if (EXPECT_HOSTNAME_PATTERNS.length && data.hostname) {
