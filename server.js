@@ -5888,36 +5888,40 @@ function resolvePublicBaseUrls(req, options = {}) {
     })
     .find(Boolean);
 
-  const isRequestHostTrusted = (EXPECT_HOSTNAME_PATTERNS.length > 0)
-    ? EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
-      if (!pattern || !pattern.suffix) return false;
-      if (hostMatchesSuffix(hostNoPort, pattern)) return true;
-      // For sitemap/robots host resolution, allow apex host when a wildcard suffix is configured
-      // so requests to example.com do not leak platform canonicals when only *.example.com is set.
-      return pattern.allowSubdomains && normHost(hostNoPort) === pattern.suffix;
-    })
-    : configured.some((entry) => {
-      if (!entry) return false;
-      if (entry === "*") return true;
+  const isExpectedHostTrusted = EXPECT_HOSTNAME_PATTERNS.some((pattern) => {
+    if (!pattern || !pattern.suffix) return false;
+    if (hostMatchesSuffix(hostNoPort, pattern)) return true;
+    // For sitemap/robots host resolution, allow apex host when a wildcard suffix is configured
+    // so requests to example.com do not leak platform canonicals when only *.example.com is set.
+    return pattern.allowSubdomains && normHost(hostNoPort) === pattern.suffix;
+  });
 
-      const asUrl = (() => {
-        try {
-          const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
-          return new URL(value);
-        } catch {
-          return null;
-        }
-      })();
+  const isConfiguredHostTrusted = configured.some((entry) => {
+    if (!entry) return false;
+    if (entry === "*") return true;
 
-      if (!asUrl) return false;
+    const asUrl = (() => {
+      try {
+        const value = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+        return new URL(value);
+      } catch {
+        return null;
+      }
+    })();
 
-      const trustedHost = normHost(asUrl.hostname);
-      if (!trustedHost) return false;
-      if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
-      return normHost(hostNoPort) === trustedHost;
-    });
+    if (!asUrl) return false;
 
-  const fallbackCanonical = firstConfiguredCanonical || firstExpectedCanonical;
+    const trustedHost = normHost(asUrl.hostname);
+    if (!trustedHost) return false;
+    if (trustedHost.startsWith("*.")) return wildcardMatches(hostNoPort, trustedHost);
+    return normHost(hostNoPort) === trustedHost;
+  });
+
+  const isRequestHostTrusted = isExpectedHostTrusted || isConfiguredHostTrusted;
+
+  const fallbackCanonical = (EXPECT_HOSTNAME_PATTERNS.length > 0)
+    ? (firstExpectedCanonical || firstConfiguredCanonical)
+    : (firstConfiguredCanonical || firstExpectedCanonical);
 
   if (requestHostOnly) {
     if (preferConfiguredCanonical) {
