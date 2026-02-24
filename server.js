@@ -4733,9 +4733,9 @@ GET /bucket-name/file.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...&
         <section style="background:linear-gradient(180deg,#fff,#f8fafc); border:1px solid var(--border); border-radius:14px; padding:24px;">
           <h4 style="margin:0 0 10px; font-size:20px;">Recommended support channels</h4>
           <ul style="margin:0; padding-left:20px; color:var(--muted); line-height:1.8;">
-            <li>Open support requests through <a href="/contact">/contact</a> for account and technical issues.</li>
-            <li>Check <a href="/status">/status</a> for ongoing incidents and maintenance notices.</li>
-            <li>Use <a href="/docs">/docs</a> for implementation and troubleshooting references.</li>
+            <li>Open support requests through <a href="/contact">contact</a> for account and technical issues.</li>
+            <li>Check <a href="/status">status</a> for ongoing incidents and maintenance notices.</li>
+            <li>Use <a href="/docs">docs</a> for implementation and troubleshooting references.</li>
           </ul>
         </section>
       </div>
