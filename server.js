@@ -3902,6 +3902,80 @@ function renderEnhancedPublicPage(req, page) {
       </div>
     `;
 
+  } else if (page.path === '/partners') {
+    pageTitle = "Partners";
+    pageDescription = `Build, integrate, and grow with the ${persona.name} partner ecosystem.`;
+
+    const partnerPrograms = [
+      {
+        title: 'Technology Partners',
+        detail: 'Integrate your platform with our APIs and security controls to deliver seamless customer experiences.',
+        perks: ['Joint solution architecture reviews', 'API launch support', 'Co-marketing opportunities']
+      },
+      {
+        title: 'Service Partners',
+        detail: 'Help customers design, migrate, and optimize production workloads with proven implementation playbooks.',
+        perks: ['Implementation certification tracks', 'Priority solution desk access', 'Partner directory placement']
+      },
+      {
+        title: 'Reseller Partners',
+        detail: 'Expand your portfolio with enterprise-ready offerings and recurring revenue programs aligned to customer growth.',
+        perks: ['Tiered margin incentives', 'Sales enablement toolkit', 'Quarterly pipeline planning']
+      }
+    ];
+
+    const onboardingSteps = [
+      ['1. Apply', 'Share your company profile, focus industries, and current customer outcomes.'],
+      ['2. Validate', `Our team reviews technical fit and go-to-market alignment with ${persona.name}.`],
+      ['3. Launch', 'Receive onboarding, enablement materials, and a shared success plan with measurable milestones.']
+    ];
+
+    pageContent = `
+      <div style="display:grid; gap:24px;">
+        <section style="padding:24px; border-radius:14px; background:linear-gradient(135deg, #eef4ff, #f8fafc); border:1px solid var(--border);">
+          <h3 style="margin:0 0 10px; font-size:24px;">Why partner with ${persona.name}</h3>
+          <p style="margin:0; color:var(--muted); line-height:1.7;">Our ecosystem gives partners the tools to deliver resilient deployments, accelerate customer onboarding, and scale recurring services with confidence.</p>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:18px;">
+            ${[
+              ['200+', 'Global edge locations'],
+              ['99.99%', 'Platform availability'],
+              ['24/7', 'Enterprise support access']
+            ].map(([value, label]) => `
+              <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px;">
+                <div style="font-size:22px; font-weight:700; color:var(--text);">${value}</div>
+                <div style="font-size:13px; color:var(--muted);">${label}</div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+
+        <section style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px;">
+          ${partnerPrograms.map(program => `
+            <article style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:20px;">
+              <h4 style="margin:0 0 10px; font-size:20px;">${program.title}</h4>
+              <p style="margin:0 0 12px; color:var(--muted); line-height:1.6;">${program.detail}</p>
+              <ul style="margin:0; padding-left:18px; color:var(--muted); line-height:1.7; font-size:14px;">
+                ${program.perks.map((perk) => `<li>${perk}</li>`).join('')}
+              </ul>
+            </article>
+          `).join('')}
+        </section>
+
+        <section style="background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px;">
+          <h4 style="margin:0 0 14px; font-size:21px;">Partnership onboarding journey</h4>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px;">
+            ${onboardingSteps.map(([title, detail]) => `
+              <div style="padding:14px; border-radius:10px; border:1px solid var(--border); background:#f8fafc;">
+                <div style="font-weight:700; margin-bottom:6px;">${title}</div>
+                <div style="font-size:14px; color:var(--muted); line-height:1.6;">${detail}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div style="margin-top:16px; color:var(--muted); font-size:14px;">Ready to get started? Connect with us at <a href="/contact">/contact</a> and select "Partnerships" in your message.</div>
+        </section>
+      </div>
+    `;
+
 
 
   } else if (page.path === '/features') {
