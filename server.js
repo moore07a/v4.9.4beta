@@ -3971,7 +3971,7 @@ function renderEnhancedPublicPage(req, page) {
               </div>
             `).join('')}
           </div>
-          <div style="margin-top:16px; color:var(--muted); font-size:14px;">Ready to get started? Connect with us at <a href="/contact">/contact</a> and select "Partnerships" in your message.</div>
+          <div style="margin-top:16px; color:var(--muted); font-size:14px;">Ready to get started? Connect with us via <a href="/contact">contact</a> and select "Partnerships" in your message.</div>
         </section>
       </div>
     `;
