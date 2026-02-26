@@ -145,9 +145,18 @@ app.use((req, res, next) => {
   res.setHeader("X-Download-Options", "noopen");
   
   // Cross-origin headers
-  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  // NOTE: Turnstile/challenge routes embed Cloudflare-owned cross-origin resources
+  // that are not consistently CORP-marked. Enforcing COEP/COOP on those pages can
+  // silently break challenge rendering and trap users in a loop.
+  if (isChallengePage) {
+    res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  } else {
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  }
   
   // Remove powered-by header
   res.removeHeader('X-Powered-By');
