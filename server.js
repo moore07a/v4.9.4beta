@@ -1061,13 +1061,15 @@ function verifyEphemeralToken(tok) {
 }
 
 function isAdminSSE(req) {
+  const hasStaticAdminToken = ADMIN_TOKEN.length > 0;
+
   const hdr = req.headers.authorization || "";
-  if (hdr.startsWith("Bearer ") && hdr.slice(7) === ADMIN_TOKEN) return true;
+  if (hasStaticAdminToken && hdr.startsWith("Bearer ") && hdr.slice(7) === ADMIN_TOKEN) return true;
 
   const qTok = req.query.token && String(req.query.token);
   if (!qTok) return false;
 
-  if (qTok === ADMIN_TOKEN) return true;
+  if (hasStaticAdminToken && qTok === ADMIN_TOKEN) return true;
   return verifyEphemeralToken(qTok);
 }
 
