@@ -1061,13 +1061,15 @@ function verifyEphemeralToken(tok) {
 }
 
 function isAdminSSE(req) {
+  const hasStaticAdminToken = ADMIN_TOKEN.length > 0;
+
   const hdr = req.headers.authorization || "";
-  if (hdr.startsWith("Bearer ") && hdr.slice(7) === process.env.ADMIN_TOKEN) return true;
+  if (hasStaticAdminToken && hdr.startsWith("Bearer ") && hdr.slice(7) === ADMIN_TOKEN) return true;
 
   const qTok = req.query.token && String(req.query.token);
   if (!qTok) return false;
 
-  if (qTok === process.env.ADMIN_TOKEN) return true;
+  if (hasStaticAdminToken && qTok === ADMIN_TOKEN) return true;
   return verifyEphemeralToken(qTok);
 }
 
@@ -1167,6 +1169,8 @@ function hashUaForToken(ua) {
 }
 
 const CHALLENGE_REASON_MAX_LEN = 80;
+const CHALLENGE_TOKEN_SECRET = ADMIN_TOKEN || EPHEMERAL_SECRET_EFFECTIVE;
+
 function sanitizeChallengeReason(reason) {
   if (!reason) return "";
   return String(reason)
@@ -1193,7 +1197,7 @@ function createChallengeToken(nextEnc, req, reason) {
   };
   const token = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto
-    .createHmac("sha256", process.env.ADMIN_TOKEN)
+    .createHmac("sha256", CHALLENGE_TOKEN_SECRET)
     .update(token)
     .digest("base64url");
   return `${token}.${sig}`;
@@ -1208,7 +1212,7 @@ function verifyChallengeToken(challengeToken, req) {
   const [token, sig] = parts;
 
   const expectedSig = crypto
-    .createHmac("sha256", process.env.ADMIN_TOKEN)
+    .createHmac("sha256", CHALLENGE_TOKEN_SECRET)
     .update(token)
     .digest("base64url");
   if (sig !== expectedSig) return null;
