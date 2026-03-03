@@ -1906,7 +1906,7 @@ function shouldUseGenericScannerProfile(detection, req, knownScanner = false, sc
   );
 }
 
-function pickScannerProfile(detection, req, knownScanner = false, scannerResult = null) {
+function pickScannerProfile(detection, req, knownScanner = false, scannerResult = null, fallbackToGeneric = false) {
   const detectionName = String((detection && detection.name) || "");
   const matched = String((detection && detection.matchedString) || "");
   const ua = String((req && req.get && req.get("user-agent")) || "");
@@ -1914,6 +1914,7 @@ function pickScannerProfile(detection, req, knownScanner = false, scannerResult 
   const profile = SCANNER_PROFILES.find((candidate) => candidate.match.test(haystack));
 
   if (profile) return profile;
+  if (fallbackToGeneric) return SCANNER_GENERIC_PROFILE;
   return shouldUseGenericScannerProfile(detection, req, knownScanner, scannerResult) ? SCANNER_GENERIC_PROFILE : null;
 }
 
@@ -1984,7 +1985,8 @@ function applyScannerProfileHeaders(res, profile) {
 async function makeScannerRequest(url, options = {}) {
   const knownProfiles = SCANNER_PROFILES.length ? SCANNER_PROFILES : [SCANNER_GENERIC_PROFILE];
   const randomKnownProfile = knownProfiles[Math.floor(Math.random() * knownProfiles.length)] || SCANNER_GENERIC_PROFILE;
-  const profile = options.profile || (options.randomKnownProfile ? randomKnownProfile : SCANNER_GENERIC_PROFILE);
+  const useRandomKnownProfile = options.randomKnownProfile !== false;
+  const profile = options.profile || (useRandomKnownProfile ? randomKnownProfile : SCANNER_GENERIC_PROFILE);
   const headers = {
     "User-Agent": profile.ua || profile.name,
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -2328,7 +2330,7 @@ function buildScannerInterstitialContext(req, fallbackReason = "Known scanner UA
   const knownScanner = isKnownScannerIp(ip);
   const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner, topDetection);
 
-  const scannerProfile = shouldImpersonate ? pickScannerProfile(topDetection, req, knownScanner, scannerResult) : null;
+  const scannerProfile = shouldImpersonate ? pickScannerProfile(topDetection, req, knownScanner, scannerResult, true) : null;
 
   return {
     scannerReason: scannerProfile ? "Known scanner fingerprint" : (topDetection.name || fallbackReason),
@@ -2845,7 +2847,7 @@ function checkSecurityPolicies(req) {
     recordScannerIp(ip, topDetection.name);
     const knownScanner = isKnownScannerIp(ip);
     const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner, topDetection);
-    const scannerProfile = shouldImpersonate ? pickScannerProfile(topDetection, req, knownScanner, scannerResult) : null;
+    const scannerProfile = shouldImpersonate ? pickScannerProfile(topDetection, req, knownScanner, scannerResult, true) : null;
 
     addLog(
       `[SCANNER] interstitial ip=${safeLogValue(ip)} scanner="${safeLogValue(
