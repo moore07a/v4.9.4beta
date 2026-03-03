@@ -840,7 +840,8 @@ async function isRateLimited(ip) {
 const BAN_TTL_SEC       = parseInt(process.env.BAN_TTL_SEC || "3600", 10);
 const BAN_AFTER_STRIKES = parseInt(process.env.BAN_AFTER_STRIKES || "4", 10);
 const STRIKE_WEIGHT_HP  = parseInt(process.env.STRIKE_WEIGHT_HP || "3", 10);
-const STRIKE_TTL_MS = Math.max(60 * 1000, parseInt(process.env.STRIKE_TTL_MS || String(24 * 60 * 60 * 1000), 10));
+const STRIKE_TTL_MS_RAW = parseInt(process.env.STRIKE_TTL_MS || String(24 * 60 * 60 * 1000), 10);
+const STRIKE_TTL_MS = Math.max(60 * 1000, Number.isFinite(STRIKE_TTL_MS_RAW) ? STRIKE_TTL_MS_RAW : 24 * 60 * 60 * 1000);
 const inMemBans = new Map();
 const inMemStrikes = new Map();
 
