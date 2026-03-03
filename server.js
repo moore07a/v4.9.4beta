@@ -840,6 +840,8 @@ async function isRateLimited(ip) {
 const BAN_TTL_SEC       = parseInt(process.env.BAN_TTL_SEC || "3600", 10);
 const BAN_AFTER_STRIKES = parseInt(process.env.BAN_AFTER_STRIKES || "4", 10);
 const STRIKE_WEIGHT_HP  = parseInt(process.env.STRIKE_WEIGHT_HP || "3", 10);
+const STRIKE_TTL_MS_RAW = parseInt(process.env.STRIKE_TTL_MS || String(24 * 60 * 60 * 1000), 10);
+const STRIKE_TTL_MS = Math.max(60 * 1000, Number.isFinite(STRIKE_TTL_MS_RAW) ? STRIKE_TTL_MS_RAW : 24 * 60 * 60 * 1000);
 const inMemBans = new Map();
 const inMemStrikes = new Map();
 
@@ -970,12 +972,36 @@ function isBanned(ip) {
   return true;
 }
 
+function getStrikeCount(safeIp, now = Date.now()) {
+  const st = inMemStrikes.get(safeIp);
+  if (st == null) return 0;
+
+  // Backward compatibility for numeric strike values.
+  if (typeof st === "number") {
+    inMemStrikes.set(safeIp, { count: st, updatedAt: now });
+    return st;
+  }
+
+  if (!st || typeof st.count !== "number") {
+    inMemStrikes.delete(safeIp);
+    return 0;
+  }
+
+  if (now - (st.updatedAt || 0) > STRIKE_TTL_MS) {
+    inMemStrikes.delete(safeIp);
+    return 0;
+  }
+
+  return st.count;
+}
+
 function addStrike(ip, weight=1){
   const safeIp = sanitizeIpForKey(ip);
-  const c = (inMemStrikes.get(safeIp) || 0) + weight;
-  inMemStrikes.set(safeIp, c);
+  const now = Date.now();
+  const c = getStrikeCount(safeIp, now) + weight;
+  inMemStrikes.set(safeIp, { count: c, updatedAt: now });
   if (c >= BAN_AFTER_STRIKES) {
-    inMemBans.set(safeIp, Date.now() + BAN_TTL_SEC*1000);
+    inMemBans.set(safeIp, now + BAN_TTL_SEC*1000);
     inMemStrikes.delete(safeIp);
     addLog(`[BAN] ip=${safeLogValue(ip)} for ${BAN_TTL_SEC}s`);
   addSpacer();
@@ -7024,6 +7050,24 @@ app.listen(PORT, async () => {
 
     for (const [key, st] of inMemDenyCache.entries()) {
       if (!st || now > st.until) inMemDenyCache.delete(key);
+    }
+
+    for (const [key, until] of inMemBans.entries()) {
+      if (!until || now > until) inMemBans.delete(key);
+    }
+
+    for (const [key, st] of inMemStrikes.entries()) {
+      if (typeof st === "number") {
+        inMemStrikes.set(key, { count: st, updatedAt: now });
+        continue;
+      }
+      if (!st || typeof st.count !== "number") {
+        inMemStrikes.delete(key);
+        continue;
+      }
+      if (!st.updatedAt || now - st.updatedAt > STRIKE_TTL_MS) {
+        inMemStrikes.delete(key);
+      }
     }
 
     flushAggregatedLogs(now);
