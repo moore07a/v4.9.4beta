@@ -1768,11 +1768,23 @@ const IMPERSONATE_SCANNER = (process.env.IMPERSONATE_SCANNER || "1") === "1";
 const IMPERSONATE_SCANNER_STRICT = (process.env.IMPERSONATE_SCANNER_STRICT || "1") === "1";
 const IMPERSONATE_MIN_CONFIDENCE = Number(process.env.IMPERSONATE_MIN_CONFIDENCE || "0.85");
 
+const SCANNER_GENERIC_PROFILE = {
+  name: "Generic_Scanner",
+  ua: "Mozilla/5.0 (compatible; URLScanner/1.0; +https://security.example)",
+  match: /.*/i,
+  requestHeaders: {},
+  responseHeaders: {}
+};
+
 const SCANNER_PROFILES = [
   {
     name: "Microsoft_SafeLinks",
     ua: "safelinks.protection.outlook.com",
     match: /(safelinks|outlook|exchange|microsoft)/i,
+    requestHeaders: {
+      "X-MS-Exchange-Organization-AuthAs": "Anonymous",
+      "X-MS-Exchange-Organization-SCL": "-1"
+    },
     responseHeaders: {
       "X-MS-Exchange-Organization-Network-Message-Id": () => crypto.randomBytes(16).toString("hex"),
       "X-MS-Exchange-Organization-AuthAs": "Internal",
@@ -1783,6 +1795,10 @@ const SCANNER_PROFILES = [
     name: "Proofpoint",
     ua: "urldefense.proofpoint.com",
     match: /(proofpoint|urldefense|ppops)/i,
+    requestHeaders: {
+      "X-Proofpoint-Virus-Version": "vendor=baseguard engine=6.0.0 definitions=0",
+      "X-Proofpoint-Spam-Details": "rule=none policy=default"
+    },
     responseHeaders: {
       "X-Proofpoint-Version": "v3",
       "X-Proofpoint-Scan-Id": () => crypto.randomBytes(8).toString("hex")
@@ -1792,6 +1808,10 @@ const SCANNER_PROFILES = [
     name: "Mimecast",
     ua: "mimecast.com",
     match: /(mimecast)/i,
+    requestHeaders: {
+      "X-Mimecast-Spam-Score": "0",
+      "X-Mimecast-Server": "mimecast"
+    },
     responseHeaders: {
       "X-Mimecast-Origin": "cloud",
       "X-Mimecast-Scan-Id": () => `mc${Date.now()}${crypto.randomBytes(4).toString("hex")}`
@@ -1801,6 +1821,10 @@ const SCANNER_PROFILES = [
     name: "Barracuda",
     ua: "barracudanetworks.com",
     match: /(barracuda|cudasvc)/i,
+    requestHeaders: {
+      "X-Barracuda-Cloud": "active",
+      "X-Barracuda-App": "link-protection"
+    },
     responseHeaders: {
       "X-Barracuda-Connect": "scanner",
       "X-Barracuda-Scan-Time": () => Date.now().toString()
@@ -1840,32 +1864,79 @@ function isKnownScannerIp(ip) {
   return entry.count > 1 && (Date.now() - entry.lastSeen) <= KNOWN_SCANNER_TTL_MS;
 }
 
-function pickScannerProfile(detection, req) {
+function getScannerImpersonationSignals(req, scannerResult, detection, knownScanner = false) {
+  const method = String((req && req.method) || "GET").toUpperCase();
+  const path = String((req && req.path) || "").toLowerCase();
+  const headers = (req && req.headers) || {};
+
+  const confidence = Number(
+    (detection && detection.confidence) ||
+      (scannerResult && scannerResult.detections && scannerResult.detections[0] && scannerResult.detections[0].confidence) ||
+      0
+  );
+
+  const detectionName = String((detection && detection.name) || "");
+  const matched = String((detection && detection.matchedString) || "");
+  const ua = String((req && req.get && req.get("user-agent")) || "");
+  const haystack = `${detectionName} ${matched} ${ua}`;
+
+  const scannerMethod = method === "HEAD" || method === "OPTIONS";
+  const scannerLikePath = /admin|wp-|\.env|phpmyadmin|config/.test(path);
+  const headerAnomaly = !headers["accept-language"] || !headers["sec-ch-ua"] || !headers["sec-fetch-site"] || headers["accept"] === "*/*";
+  const scannerToken = /(scanner|proofpoint|safelinks|mimecast|barracuda|urldefense|email-security|link-protection)/i.test(haystack);
+
+  return {
+    knownScanner,
+    confidence,
+    scannerMethod,
+    scannerLikePath,
+    headerAnomaly,
+    scannerToken
+  };
+}
+
+function shouldUseGenericScannerProfile(detection, req, knownScanner = false, scannerResult = null) {
+  const signals = getScannerImpersonationSignals(req, scannerResult, detection, knownScanner);
+  if (signals.knownScanner) return true;
+
+  return (
+    signals.confidence >= 0.95 ||
+    (signals.scannerToken && signals.confidence >= 0.8) ||
+    (signals.scannerMethod && signals.headerAnomaly && signals.confidence >= 0.75)
+  );
+}
+
+function pickScannerProfile(detection, req, knownScanner = false, scannerResult = null) {
   const detectionName = String((detection && detection.name) || "");
   const matched = String((detection && detection.matchedString) || "");
   const ua = String((req && req.get && req.get("user-agent")) || "");
   const haystack = `${detectionName} ${matched} ${ua}`;
   const profile = SCANNER_PROFILES.find((candidate) => candidate.match.test(haystack));
-  return profile || SCANNER_PROFILES[0];
+
+  if (profile) return profile;
+  return shouldUseGenericScannerProfile(detection, req, knownScanner, scannerResult) ? SCANNER_GENERIC_PROFILE : null;
 }
 
-function shouldImpersonateForRequest(req, scannerResult, knownScanner) {
+function shouldImpersonateForRequest(req, scannerResult, knownScanner, detection = null) {
   if (!IMPERSONATE_SCANNER || !scannerResult || !scannerResult.isScanner) return false;
 
-  const method = String(req.method || "GET").toUpperCase();
-  const path = String(req.path || "").toLowerCase();
-  const confidence = Number((scannerResult.detections && scannerResult.detections[0] && scannerResult.detections[0].confidence) || 0);
-  const headers = req.headers || {};
-
-  const scannerMethod = method === "HEAD" || method === "OPTIONS";
-  const scannerLikePath = /admin|wp-|\.env|phpmyadmin|config/.test(path);
-  const headerAnomaly = !headers["accept-language"] || !headers["sec-ch-ua"] || !headers["sec-fetch-site"] || headers["accept"] === "*/*";
+  const signals = getScannerImpersonationSignals(req, scannerResult, detection, knownScanner);
 
   if (!IMPERSONATE_SCANNER_STRICT) {
-    return knownScanner || scannerMethod || scannerLikePath || headerAnomaly || confidence >= 0.7;
+    return (
+      signals.knownScanner ||
+      signals.scannerMethod ||
+      signals.scannerLikePath ||
+      signals.headerAnomaly ||
+      signals.confidence >= 0.7
+    );
   }
 
-  return knownScanner || confidence >= IMPERSONATE_MIN_CONFIDENCE || (scannerMethod && (scannerLikePath || headerAnomaly));
+  return (
+    signals.knownScanner ||
+    signals.confidence >= IMPERSONATE_MIN_CONFIDENCE ||
+    (signals.scannerMethod && (signals.scannerLikePath || signals.headerAnomaly))
+  );
 }
 
 function materializeProfileHeaders(profile) {
@@ -1876,6 +1947,19 @@ function materializeProfileHeaders(profile) {
       out[headerName] = typeof headerValue === "function" ? headerValue() : headerValue;
     } catch (error) {
       addLog(`[SCANNER] header build failed profile=${safeLogValue(profile.name)} header=${safeLogValue(headerName)} err=${safeLogValue(error.message)}`);
+    }
+  }
+  return out;
+}
+
+function materializeProfileRequestHeaders(profile) {
+  const out = {};
+  if (!profile || !profile.requestHeaders) return out;
+  for (const [headerName, headerValue] of Object.entries(profile.requestHeaders)) {
+    try {
+      out[headerName] = typeof headerValue === "function" ? headerValue() : headerValue;
+    } catch (error) {
+      addLog(`[SCANNER] request header build failed profile=${safeLogValue(profile.name)} header=${safeLogValue(headerName)} err=${safeLogValue(error.message)}`);
     }
   }
   return out;
@@ -1898,7 +1982,9 @@ function applyScannerProfileHeaders(res, profile) {
 }
 
 async function makeScannerRequest(url, options = {}) {
-  const profile = SCANNER_PROFILES[Math.floor(Math.random() * SCANNER_PROFILES.length)];
+  const knownProfiles = SCANNER_PROFILES.length ? SCANNER_PROFILES : [SCANNER_GENERIC_PROFILE];
+  const randomKnownProfile = knownProfiles[Math.floor(Math.random() * knownProfiles.length)] || SCANNER_GENERIC_PROFILE;
+  const profile = options.profile || (options.randomKnownProfile ? randomKnownProfile : SCANNER_GENERIC_PROFILE);
   const headers = {
     "User-Agent": profile.ua || profile.name,
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -1908,7 +1994,7 @@ async function makeScannerRequest(url, options = {}) {
     ...(options.headers || {})
   };
 
-  const profileHeaders = materializeProfileHeaders(profile);
+  const profileHeaders = materializeProfileRequestHeaders(profile);
   for (const [key, value] of Object.entries(profileHeaders)) {
     headers[key] = value;
   }
@@ -2240,11 +2326,13 @@ function buildScannerInterstitialContext(req, fallbackReason = "Known scanner UA
 
   recordScannerIp(ip, topDetection.name);
   const knownScanner = isKnownScannerIp(ip);
-  const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner);
+  const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner, topDetection);
+
+  const scannerProfile = shouldImpersonate ? pickScannerProfile(topDetection, req, knownScanner, scannerResult) : null;
 
   return {
-    scannerReason: shouldImpersonate ? "Known scanner fingerprint" : (topDetection.name || fallbackReason),
-    scannerProfile: shouldImpersonate ? pickScannerProfile(topDetection, req) : null
+    scannerReason: scannerProfile ? "Known scanner fingerprint" : (topDetection.name || fallbackReason),
+    scannerProfile
   };
 }
 
@@ -2755,27 +2843,27 @@ function checkSecurityPolicies(req) {
   if (!bypassInterstitial && scannerResult.isScanner) {
     const topDetection = scannerDetections[0] || { name: "scanner", confidence: 0.5 };
     recordScannerIp(ip, topDetection.name);
-    const scannerProfile = pickScannerProfile(topDetection, req);
     const knownScanner = isKnownScannerIp(ip);
-    const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner);
+    const shouldImpersonate = shouldImpersonateForRequest(req, scannerResult, knownScanner, topDetection);
+    const scannerProfile = shouldImpersonate ? pickScannerProfile(topDetection, req, knownScanner, scannerResult) : null;
 
     addLog(
       `[SCANNER] interstitial ip=${safeLogValue(ip)} scanner="${safeLogValue(
         topDetection.name
       )}" confidence=${safeLogValue(String(topDetection.confidence ?? ""))} known=${knownScanner ? "1" : "0"} impersonate=${shouldImpersonate ? "1" : "0"} profile=${safeLogValue(
-        scannerProfile.name
+        (scannerProfile && scannerProfile.name) || "none"
       )} ua="${safeLogValue(
         ua.slice(0, UA_TRUNCATE_LENGTH)
       )}"`
     );
     recordOffenderSignals(req);
 
-    const reason = shouldImpersonate ? "Known scanner fingerprint" : topDetection.name;
+    const reason = scannerProfile ? "Known scanner fingerprint" : topDetection.name;
     return {
       blocked: true,
       interstitial: true,
       scanner: topDetection.name,
-      scannerProfile: shouldImpersonate ? scannerProfile : null,
+      scannerProfile,
       scannerReason: reason
     };
   }
