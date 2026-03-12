@@ -363,7 +363,7 @@ function validateBase64Url(input) {
 function validateRedirectParams(req) {
   const errors = [];
 
-  if (req.path === "/r" || req.path.startsWith("/r/")) {
+  if (pathMatchesWithOptionalPrefix(req.path, "/r")) {
     const baseString = safeDecode(String(req.query.d || req.params.data || ""));
 
     if (!baseString) {
@@ -391,7 +391,7 @@ function validateRedirectParams(req) {
 
   // Catch-all route hardening: reject obvious scanner paths early so they do not
   // enter challenge flow/log spam loops.
-  if (req.path !== "/" && req.path !== "/r" && !req.path.startsWith("/e/")) {
+  if (req.path !== "/" && !pathMatchesWithOptionalPrefix(req.path, "/r") && !req.path.startsWith("/e/")) {
     const candidateRaw = String((req.originalUrl || "").slice(1).split("?")[0] || "");
     const { payloadPath: candidate } = stripOptionalUrlPrefix(candidateRaw);
     if (!candidate || !validateBase64Url(candidate)) {
@@ -456,7 +456,7 @@ function validateRedirectRequest(req, res, next) {
     }
 
     const sendValidationError = () => {
-      if (req.path === "/r" && !req.query.d) {
+      if (pathMatchesWithOptionalPrefix(req.path, "/r", { allowChildren: false }) && !req.query.d) {
         return res.status(400).send("Missing required parameter: d");
       }
       if (errors.some(e => e.includes("Invalid catch-all path"))) {
@@ -465,7 +465,7 @@ function validateRedirectRequest(req, res, next) {
       return res.status(400).send("Invalid request");
     };
 
-    if (req.path === "/r" || req.path.startsWith("/r/")) {
+    if (pathMatchesWithOptionalPrefix(req.path, "/r")) {
       return validationFailureLimiter(req, res, sendValidationError);
     }
 
