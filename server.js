@@ -251,6 +251,44 @@ function safeDecode(s) {
   try { return decodeURIComponent(s); } catch { return s; }
 }
 
+function parseOptionalUrlPrefix(rawPrefix) {
+  const normalized = String(rawPrefix || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+
+  if (!normalized) return [];
+
+  return normalized
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+const OPTIONAL_URL_PREFIX_SEGMENTS = parseOptionalUrlPrefix(process.env.OPTIONAL_URL_PREFIX || "");
+const OPTIONAL_URL_PREFIX = OPTIONAL_URL_PREFIX_SEGMENTS.join("/");
+
+function stripOptionalUrlPrefix(pathValue) {
+  const clean = safeDecode(String(pathValue || "")).replace(/^\/+|\/+$/g, "");
+  if (!clean) {
+    return { payloadPath: "", usedPrefix: false };
+  }
+
+  if (!OPTIONAL_URL_PREFIX) {
+    return { payloadPath: clean, usedPrefix: false };
+  }
+
+  if (clean === OPTIONAL_URL_PREFIX) {
+    return { payloadPath: "", usedPrefix: true };
+  }
+
+  const prefixWithSlash = `${OPTIONAL_URL_PREFIX}/`;
+  if (clean.startsWith(prefixWithSlash)) {
+    return { payloadPath: clean.slice(prefixWithSlash.length), usedPrefix: true };
+  }
+
+  return { payloadPath: clean, usedPrefix: false };
+}
+
 // ================== REQUEST VALIDATION MIDDLEWARE ==================
 function validateBase64Url(input) {
   if (!input || typeof input !== "string") return false;
@@ -324,7 +362,8 @@ function validateRedirectParams(req) {
   // Catch-all route hardening: reject obvious scanner paths early so they do not
   // enter challenge flow/log spam loops.
   if (req.path !== "/" && req.path !== "/r" && !req.path.startsWith("/e/")) {
-    const candidate = safeDecode(String((req.originalUrl || "").slice(1).split("?")[0] || ""));
+    const candidateRaw = String((req.originalUrl || "").slice(1).split("?")[0] || "");
+    const { payloadPath: candidate } = stripOptionalUrlPrefix(candidateRaw);
     if (!candidate || !validateBase64Url(candidate)) {
       errors.push("Invalid catch-all path: expected encoded redirect payload");
     }
@@ -6955,7 +6994,17 @@ app.get("/r", async (req, res) => {
 app.get("/:data(*)", async (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(1);
   const cleanPath = urlPathFull.split("?")[0];
-  return handleRedirectCore(req, res, cleanPath);
+  const { payloadPath, usedPrefix } = stripOptionalUrlPrefix(cleanPath);
+
+  if (!payloadPath) {
+    return res.status(404).send("Not Found");
+  }
+
+  if (usedPrefix) {
+    addLog(`[ROUTE] optional prefix matched prefix=${safeLogValue(OPTIONAL_URL_PREFIX, 80)} ip=${safeLogValue(getClientIp(req))}`);
+  }
+
+  return handleRedirectCore(req, res, payloadPath);
 });
 
 // ================== HEALTH CHECK CONSTANTS ==================
@@ -7070,6 +7119,7 @@ function startupSummary() {
     `  • RateLimit: capacity=${RATE_CAPACITY}/window=${RATE_WINDOW_SECONDS}s`,
     `  • Bans: ttl=${BAN_TTL_SEC}s threshold=${BAN_AFTER_STRIKES} hpWeight=${STRIKE_WEIGHT_HP}`,
     `  • Allowlist patterns=[${ALLOWLIST_DOMAINS.map(p => p.allowSubdomains ? `*.${p.suffix}` : p.suffix).join(",")||"-"}]`,
+    `  • Optional URL prefix: ${OPTIONAL_URL_PREFIX || "disabled"}`,
     `  • Challenge security: rateLimit=5/5min tokens=10min`,
     `  • Geo fallback active=${Boolean(geoip)}`,
     healthLine,
