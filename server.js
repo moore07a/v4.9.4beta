@@ -427,6 +427,9 @@ function validateRedirectRequest(req, res, next) {
 
   if (
     skipPaths.some(path => req.path.startsWith(path)) ||
+    pathMatchesWithOptionalPrefix(req.path, "/health", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/stream-log", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/view-log") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge-fragment") ||
     pathMatchesWithOptionalPrefix(req.path, "/decrypt-challenge-data", { allowChildren: false }) ||
