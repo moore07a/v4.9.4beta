@@ -319,6 +319,18 @@ function stripOptionalUrlPrefix(pathValue) {
   return { payloadPath: clean, usedPrefix: false };
 }
 
+function extractEmailSafePayloadPath(req) {
+  if (req && req.params && typeof req.params.data === "string") {
+    return String(req.params.data);
+  }
+
+  const candidateRaw = String((req?.originalUrl || "").slice(1).split("?")[0] || "");
+  const { payloadPath } = stripOptionalUrlPrefix(candidateRaw);
+  if (!payloadPath) return "";
+  if (payloadPath.startsWith("e/")) return payloadPath.slice(2);
+  return payloadPath;
+}
+
 // ================== REQUEST VALIDATION MIDDLEWARE ==================
 function validateBase64Url(input) {
   if (!input || typeof input !== "string") return false;
@@ -415,6 +427,9 @@ function validateRedirectRequest(req, res, next) {
 
   if (
     skipPaths.some(path => req.path.startsWith(path)) ||
+    pathMatchesWithOptionalPrefix(req.path, "/health", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/stream-log", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/view-log") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge-fragment") ||
     pathMatchesWithOptionalPrefix(req.path, "/decrypt-challenge-data", { allowChildren: false }) ||
@@ -2803,8 +2818,8 @@ app.use((req, res, next) => {
   if (req.method !== "HEAD" && req.method !== "OPTIONS") return next();
 
   // Handle /e/* specifically (email-safe deep links)
-  if (req.path.startsWith("/e/")) {
-    const clean = (req.originalUrl || "").slice(3).split("?")[0];
+  if (pathMatchesWithOptionalPrefix(req.path, "/e")) {
+    const clean = extractEmailSafePayloadPath(req);
     const scannerCtx = buildScannerInterstitialContext(req, req.method + "-probe");
     if (req.method === "HEAD") {
       logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
@@ -2857,8 +2872,8 @@ app.use((req, res, next) => {
     return next();
   }
 
-  if (req.method === "GET" && req.path.startsWith("/e/")) {
-    const clean = (req.originalUrl || "").slice(3).split("?")[0];
+  if (req.method === "GET" && pathMatchesWithOptionalPrefix(req.path, "/e")) {
+    const clean = extractEmailSafePayloadPath(req);
     const scannerCtx = buildScannerInterstitialContext(req, "GET-probe");
     logScannerHit(req, scannerCtx.scannerReason || "GET-probe", clean);
     return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || "GET-probe", {
@@ -5872,7 +5887,7 @@ if (OPTIONAL_URL_PREFIX) {
   app.post(withOptionalUrlPrefix("/decrypt-challenge-data"), express.json({ limit: "1kb" }), handleDecryptChallengeData);
 }
 
-app.get("/health", (_req, res) => {
+const handleHealth = (_req, res) => {
   const turnstileHealthy = _health.ok !== false;
   const statusCode = turnstileHealthy ? 200 : 503;
 
@@ -5888,7 +5903,12 @@ app.get("/health", (_req, res) => {
       }
     }
   });
-});
+};
+
+app.get("/health", handleHealth);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/health"), handleHealth);
+}
 
 const handleTsClientLog = (req, res) => {
     const ip  = getClientIp(req) || "unknown";
@@ -5969,7 +5989,7 @@ if (OPTIONAL_URL_PREFIX) {
   app.post(withOptionalUrlPrefix("/interstitial-human"), express.json({ type: "application/json", limit: "4kb" }), handleInterstitialHuman);
 }
 
-app.get("/stream-log", (req, res) => {
+const handleStreamLog = (req, res) => {
   if (!isAdminSSE(req)) return res.status(403).end("Forbidden: missing admin token (SSE)");
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -6016,7 +6036,12 @@ app.get("/stream-log", (req, res) => {
 
   req.socket?.setTimeout?.(0);
   req.socket?.setKeepAlive?.(true);
-});
+};
+
+app.get("/stream-log", handleStreamLog);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/stream-log"), handleStreamLog);
+}
 
 app.get("/view-log-live", (req, res) => {
   if (!(isAdmin(req) || isAdminSSE(req))) {
@@ -7023,9 +7048,8 @@ app.use((req, res, next) => {
   return servePublicPathResponse(req, res, pathname, persona, seed);
 });
 
-app.get("/e/:data(*)", (req, res) => {
-  const urlPathFull = (req.originalUrl || "").slice(3);
-  const clean = urlPathFull.split("?")[0];
+const handleEmailSafePath = (req, res) => {
+  const clean = extractEmailSafePayloadPath(req);
   const scannerCtx = buildScannerInterstitialContext(req, "Email-safe path");
   addLog(`[INTERSTITIAL] /e path used len=${clean.length}`);
   logScannerHit(req, scannerCtx.scannerReason || "Email-safe path", clean);
@@ -7033,11 +7057,15 @@ app.get("/e/:data(*)", (req, res) => {
     emailSafe: true,
     scannerProfile: scannerCtx.scannerProfile
   });
-});
+};
 
-app.head("/e/:data(*)", (req, res) => {
-  const urlPathFull = (req.originalUrl || "").slice(3);
-  const clean = urlPathFull.split("?")[0];
+app.get("/e/:data(*)", handleEmailSafePath);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/e/:data(*)"), handleEmailSafePath);
+}
+
+const handleEmailSafePathHead = (req, res) => {
+  const clean = extractEmailSafePayloadPath(req);
   const scannerCtx = buildScannerInterstitialContext(req, "HEAD-probe");
   addLog(`[INTERSTITIAL] HEAD /e path`);
   logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
@@ -7046,7 +7074,12 @@ app.head("/e/:data(*)", (req, res) => {
     applyScannerProfileHeaders(res, scannerCtx.scannerProfile);
   }
   res.status(200).type("html").end();
-});
+};
+
+app.head("/e/:data(*)", handleEmailSafePathHead);
+if (OPTIONAL_URL_PREFIX) {
+  app.head(withOptionalUrlPrefix("/e/:data(*)"), handleEmailSafePathHead);
+}
 
 const handleRRoute = async (req, res) => {
   const baseString = safeDecode(String(req.query.d || ""));
