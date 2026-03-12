@@ -7,6 +7,7 @@ set -euo pipefail
 # BEST edition:
 # - Multi-domain support via domains file
 # - Wildcard support per domain: domain + *.domain
+# - Optional explicit wildcard hostname entries (e.g. *.r.af.d.example.com)
 # - Same backend for all domains
 # - Cloudflare Origin CA cert via API (no manual paste)
 # - Idempotent re-runs (re-issue cert only if domains changed or cert missing/expiring)
@@ -208,17 +209,26 @@ ensure_domains_file() {
 }
 
 normalize_domain() {
-  echo "${1:-}" | tr 'A-Z' 'a-z' | sed 's/\.$//' | xargs
+  echo "${1:-}" | tr 'A-Z' 'a-z' | sed 's/^\*\./*./' | sed 's/\.$//' | xargs
 }
 
 valid_domain() {
   echo "${1:-}" | grep -qiE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
 }
 
+valid_hostname_entry() {
+  local h="${1:-}"
+  if [[ "$h" == "*."* ]]; then
+    valid_domain "${h#*.}"
+  else
+    valid_domain "$h"
+  fi
+}
+
 add_domain() {
   local d
   d="$(normalize_domain "$1")"
-  valid_domain "$d" || die "Invalid domain: $1"
+  valid_hostname_entry "$d" || die "Invalid domain/hostname entry: $1"
 
   ensure_domains_file
 
@@ -291,8 +301,8 @@ load_domains() {
     d="$(trim "$d")"
     d="${d%.}"
     [[ -z "$d" ]] && continue
-    if ! valid_domain "$d"; then
-      die "Invalid domain in domains file: $d"
+    if ! valid_hostname_entry "$d"; then
+      die "Invalid domain/hostname entry in domains file: $d"
     fi
     NORMALIZED+=("$(echo "$d" | tr 'A-Z' 'a-z')")
   done
@@ -308,6 +318,13 @@ load_domains() {
 build_hostnames() {
   ALL_HOSTNAMES=()
   for d in "${DOMAINS[@]}"; do
+    if [[ "$d" == "*."* ]]; then
+      # Explicit wildcard entry (e.g. *.r.af.d.example.com): keep as-is,
+      # do not expand with another wildcard/www.
+      ALL_HOSTNAMES+=("$d")
+      continue
+    fi
+
     ALL_HOSTNAMES+=("$d")
 
     if [[ "$ENABLE_WILDCARDS" == "1" ]]; then
@@ -630,6 +647,7 @@ final_checks() {
   echo "Cloudflare reminders:"
   echo "  - For EACH domain: DNS A record for @ -> VPS IP must be Proxied (orange cloud)"
   echo "  - For wildcard subdomains: add DNS record '*' -> VPS IP (Proxied) (optional)"
+  echo "  - Deep subdomain wildcards require explicit deeper wildcard entries (e.g. '*.r.af.d.example.com')."
   echo "  - SSL/TLS mode: Full (strict)"
 }
 
