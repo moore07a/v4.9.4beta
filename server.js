@@ -12,14 +12,21 @@ let fetchFn = globalThis.fetch;
 if (!fetchFn) { try { fetchFn = require("node-fetch"); } catch (_) {} }
 const fetch = fetchFn;
 
-const FETCH_TIMEOUT_MS_DEFAULT = Math.max(1000, parseInt(process.env.FETCH_TIMEOUT_MS || "8000", 10));
-const REQUEST_TIMEOUT_MS = Math.max(1000, parseInt(process.env.REQUEST_TIMEOUT_MS || "30000", 10));
-const SERVER_KEEP_ALIVE_TIMEOUT_MS = Math.max(1000, parseInt(process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS || "5000", 10));
+function readMsEnv(name, defaultMs, minMs = 1000) {
+  const raw = process.env[name];
+  const parsed = Number.parseInt(String(raw ?? defaultMs), 10);
+  const safe = Number.isFinite(parsed) ? parsed : defaultMs;
+  return Math.max(minMs, safe);
+}
+
+const FETCH_TIMEOUT_MS_DEFAULT = readMsEnv("FETCH_TIMEOUT_MS", 8000, 1000);
+const REQUEST_TIMEOUT_MS = readMsEnv("REQUEST_TIMEOUT_MS", 30000, 1000);
+const SERVER_KEEP_ALIVE_TIMEOUT_MS = readMsEnv("SERVER_KEEP_ALIVE_TIMEOUT_MS", 5000, 1000);
 const SERVER_HEADERS_TIMEOUT_MS = Math.max(
   SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000,
-  parseInt(process.env.SERVER_HEADERS_TIMEOUT_MS || String(SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000), 10)
+  readMsEnv("SERVER_HEADERS_TIMEOUT_MS", SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000, SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000)
 );
-const SHUTDOWN_GRACE_MS = Math.max(1000, parseInt(process.env.SHUTDOWN_GRACE_MS || "10000", 10));
+const SHUTDOWN_GRACE_MS = readMsEnv("SHUTDOWN_GRACE_MS", 10000, 1000);
 
 function normalizeTimeoutMs(ms, fallbackMs = FETCH_TIMEOUT_MS_DEFAULT) {
   const n = Number(ms);
@@ -98,11 +105,12 @@ function getRuntimeUsageSnapshot() {
   return {
     cpu: {
       processPercent: roundMetric(cpuPercent),
-      processPercentPerCore: roundMetric(cpuPercent / cpuCount),
+      processPercentPerCore: roundMetric(cpuPercent / cpuCount, 4),
       cores: cpuCount,
       loadAvg1m: roundMetric(os.loadavg()[0]),
       loadAvg5m: roundMetric(os.loadavg()[1]),
-      loadAvg15m: roundMetric(os.loadavg()[2])
+      loadAvg15m: roundMetric(os.loadavg()[2]),
+      note: "loadAvg* reflects host/container scheduler load and is not app-only CPU%"
     },
     memory: {
       rssMb: roundMetric(mem.rss / (1024 * 1024)),
