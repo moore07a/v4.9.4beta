@@ -493,7 +493,7 @@ function validateRedirectParams(req) {
 
 function validateRedirectRequest(req, res, next) {
   const skipPaths = [
-    "/health", "/view-log", "/stream-log", "/geo-debug",
+    "/health", "/healthz", "/readyz", "/view-log", "/stream-log", "/geo-debug",
     "/admin/", "/__debug/", "/_debug/", "/challenge",
     "/ts-client-log", "/interstitial-human", "/favicon.ico",
     "/robots.txt", "/turnstile-sitekey", "/__hp.gif",
@@ -505,6 +505,8 @@ function validateRedirectRequest(req, res, next) {
   if (
     skipPaths.some(path => req.path.startsWith(path)) ||
     pathMatchesWithOptionalPrefix(req.path, "/health", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/healthz", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/readyz", { allowChildren: false }) ||
     pathMatchesWithOptionalPrefix(req.path, "/stream-log", { allowChildren: false }) ||
     pathMatchesWithOptionalPrefix(req.path, "/view-log") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
@@ -2882,7 +2884,9 @@ app.use((req, res, next) => {
 
   // allow your own health, logs, and challenge endpoints through
   if (
-    req.path === "/health" ||
+    pathMatchesWithOptionalPrefix(req.path, "/health", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/healthz", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/readyz", { allowChildren: false }) ||
     req.path.startsWith("/view-log") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
     pathMatchesWithOptionalPrefix(req.path, "/ts-client-log", { allowChildren: false }) ||
@@ -2940,7 +2944,9 @@ app.use((req, res, next) => {
 
   // Let your own endpoints through untouched
   if (
-    req.path === "/health" ||
+    pathMatchesWithOptionalPrefix(req.path, "/health", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/healthz", { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(req.path, "/readyz", { allowChildren: false }) ||
     req.path.startsWith("/view-log") ||
     pathMatchesWithOptionalPrefix(req.path, "/challenge") ||
     pathMatchesWithOptionalPrefix(req.path, "/ts-client-log", { allowChildren: false }) ||
