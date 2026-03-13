@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 // fetch (Node 18+ has global fetch)
 let fetchFn = globalThis.fetch;
@@ -12,6 +13,13 @@ if (!fetchFn) { try { fetchFn = require("node-fetch"); } catch (_) {} }
 const fetch = fetchFn;
 
 const FETCH_TIMEOUT_MS_DEFAULT = Math.max(1000, parseInt(process.env.FETCH_TIMEOUT_MS || "8000", 10));
+const REQUEST_TIMEOUT_MS = Math.max(1000, parseInt(process.env.REQUEST_TIMEOUT_MS || "30000", 10));
+const SERVER_KEEP_ALIVE_TIMEOUT_MS = Math.max(1000, parseInt(process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS || "5000", 10));
+const SERVER_HEADERS_TIMEOUT_MS = Math.max(
+  SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000,
+  parseInt(process.env.SERVER_HEADERS_TIMEOUT_MS || String(SERVER_KEEP_ALIVE_TIMEOUT_MS + 1000), 10)
+);
+const SHUTDOWN_GRACE_MS = Math.max(1000, parseInt(process.env.SHUTDOWN_GRACE_MS || "10000", 10));
 
 function normalizeTimeoutMs(ms, fallbackMs = FETCH_TIMEOUT_MS_DEFAULT) {
   const n = Number(ms);
@@ -53,6 +61,58 @@ const BRUTE_FORCE_MIN_RATIO = 0.4;
 const LOG_ENTRY_MAX_LENGTH = 300;
 const EMAIL_DISPLAY_MAX_LENGTH = 80;
 const URL_DISPLAY_MAX_LENGTH = 120;
+const runtimeStats = {
+  requestTimeouts: 0,
+  shutdownSignals: 0
+};
+
+let cpuSnapshot = {
+  timeNs: process.hrtime.bigint(),
+  usage: process.cpuUsage()
+};
+
+function roundMetric(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const pow = 10 ** digits;
+  return Math.round(n * pow) / pow;
+}
+
+function getRuntimeUsageSnapshot() {
+  const mem = process.memoryUsage();
+  const nowNs = process.hrtime.bigint();
+  const currentUsage = process.cpuUsage();
+
+  const elapsedUs = Number(nowNs - cpuSnapshot.timeNs) / 1000;
+  const deltaUserUs = currentUsage.user - cpuSnapshot.usage.user;
+  const deltaSystemUs = currentUsage.system - cpuSnapshot.usage.system;
+  const deltaTotalUs = deltaUserUs + deltaSystemUs;
+  const cpuPercent = elapsedUs > 0 ? (deltaTotalUs / elapsedUs) * 100 : 0;
+  const cpuCount = Math.max(1, os.cpus().length || 1);
+
+  cpuSnapshot = {
+    timeNs: nowNs,
+    usage: currentUsage
+  };
+
+  return {
+    cpu: {
+      processPercent: roundMetric(cpuPercent),
+      processPercentPerCore: roundMetric(cpuPercent / cpuCount),
+      cores: cpuCount,
+      loadAvg1m: roundMetric(os.loadavg()[0]),
+      loadAvg5m: roundMetric(os.loadavg()[1]),
+      loadAvg15m: roundMetric(os.loadavg()[2])
+    },
+    memory: {
+      rssMb: roundMetric(mem.rss / (1024 * 1024)),
+      heapUsedMb: roundMetric(mem.heapUsed / (1024 * 1024)),
+      heapTotalMb: roundMetric(mem.heapTotal / (1024 * 1024)),
+      externalMb: roundMetric(mem.external / (1024 * 1024)),
+      arrayBuffersMb: roundMetric((mem.arrayBuffers || 0) / (1024 * 1024))
+    }
+  };
+}
 
 const app = express();
 function parseTrustProxyValue(rawValue) {
@@ -92,6 +152,23 @@ const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() 
 
 // ------------ Enhanced Global Security Headers ---------------
 app.use((req, res, next) => {
+  req.setTimeout(REQUEST_TIMEOUT_MS);
+  res.setTimeout(REQUEST_TIMEOUT_MS);
+
+  req.on("timeout", () => {
+    runtimeStats.requestTimeouts += 1;
+    addLog(`[TIMEOUT] request timeout ip=${safeLogValue(getClientIp(req), 64)} method=${safeLogValue(req.method, 12)} path=${safeLogValue(req.path, 120)} timeoutMs=${REQUEST_TIMEOUT_MS}`);
+
+    if (!res.headersSent) {
+      res.status(408).json({ ok: false, error: "request_timeout" });
+      return;
+    }
+
+    try {
+      req.destroy();
+    } catch (_) {}
+  });
+
   // Generate a nonce for CSP
   const cspNonce = crypto.randomBytes(16).toString('base64');
   res.locals.cspNonce = cspNonce;
@@ -5890,10 +5967,19 @@ if (OPTIONAL_URL_PREFIX) {
 const handleHealth = (_req, res) => {
   const turnstileHealthy = _health.ok !== false;
   const statusCode = turnstileHealthy ? 200 : 503;
+  const uptimeSec = Math.floor(process.uptime());
+  const usage = getRuntimeUsageSnapshot();
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
+    uptimeSec,
     time: new Date().toISOString(),
+    stats: {
+      requestTimeouts: runtimeStats.requestTimeouts,
+      shutdownSignals: runtimeStats.shutdownSignals,
+      cpu: usage.cpu,
+      memory: usage.memory
+    },
     checks: {
       turnstile: {
         ok: _health.ok,
@@ -5905,9 +5991,34 @@ const handleHealth = (_req, res) => {
   });
 };
 
+const handleLiveness = (_req, res) => {
+  const usage = getRuntimeUsageSnapshot();
+  res.status(200).json({
+    ok: true,
+    uptimeSec: Math.floor(process.uptime()),
+    ts: Date.now(),
+    stats: {
+      requestTimeouts: runtimeStats.requestTimeouts,
+      shutdownSignals: runtimeStats.shutdownSignals,
+      cpu: usage.cpu,
+      memory: usage.memory
+    }
+  });
+};
+
 app.get("/health", handleHealth);
 if (OPTIONAL_URL_PREFIX) {
   app.get(withOptionalUrlPrefix("/health"), handleHealth);
+}
+
+app.get("/readyz", handleHealth);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/readyz"), handleHealth);
+}
+
+app.get("/healthz", handleLiveness);
+if (OPTIONAL_URL_PREFIX) {
+  app.get(withOptionalUrlPrefix("/healthz"), handleLiveness);
 }
 
 const handleTsClientLog = (req, res) => {
@@ -7270,7 +7381,7 @@ async function checkTurnstileReachable() {
 }
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   if (geoip) addLog("ℹ️ geoip-lite enabled as country fallback");
   
   await loadScannerPatterns();
@@ -7329,3 +7440,29 @@ app.listen(PORT, async () => {
 
   addSpacer();
 });
+
+server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+
+let isShuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  runtimeStats.shutdownSignals += 1;
+
+  addLog(`[SHUTDOWN] Received ${signal}; closing server (grace=${SHUTDOWN_GRACE_MS}ms)`);
+
+  const forceExitTimer = setTimeout(() => {
+    addLog(`[SHUTDOWN] force exit after grace timeout (${SHUTDOWN_GRACE_MS}ms)`);
+    process.exit(1);
+  }, SHUTDOWN_GRACE_MS);
+
+  server.close(() => {
+    clearTimeout(forceExitTimer);
+    addLog("[SHUTDOWN] server closed cleanly");
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
