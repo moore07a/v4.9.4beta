@@ -81,6 +81,7 @@ const runtimeStats = {
   totalRequests: 0,
   inFlightRequests: 0,
   completedRequests: 0,
+  abortedRequests: 0,
   lastRequestStartedAt: null,
   lastRequestCompletedAt: null,
   lastRequestPath: null,
@@ -119,36 +120,8 @@ function getEventTimestamp(meta) {
 }
 
 function shouldTrackRuntimeRequest(req) {
-  const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
-  if (
-    pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
-    pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
-    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false })
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function summarizeError(error, maxLen = 220) {
-  if (error == null) return null;
-  const value = String(error && error.stack ? error.stack : error);
-  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
-}
-
-function sanitizeRequestPath(value) {
-  const raw = String(value || '/');
-  const noQuery = raw.split('?')[0].split('#')[0] || '/';
-  return safeLogValue(noQuery, 180);
-}
-
-function getEventTimestamp(meta) {
-  if (!meta || typeof meta !== 'object') return null;
-  return typeof meta.at === 'string' ? meta.at : null;
-}
-
-function shouldTrackRuntimeRequest(req) {
-  const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  const pathValueRaw = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  const pathValue = pathValueRaw.length > 1 ? pathValueRaw.replace(/\/+$/, '') : pathValueRaw;
   if (
     pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
     pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
@@ -265,25 +238,35 @@ app.use((req, res, next) => {
   }
 
   let requestAccounted = false;
-  const recordRequestCompletion = () => {
-    if (!trackRuntimeRequest || requestAccounted) return;
+  const finalizeTrackedRequest = () => {
+    if (!trackRuntimeRequest || requestAccounted) return false;
     requestAccounted = true;
     activeTrackedRequests.delete(trackedRequestId);
     runtimeStats.inFlightRequests = getTrackedInFlightCount();
-    runtimeStats.completedRequests += 1;
-    runtimeStats.lastRequestCompletedAt = new Date().toISOString();
-    runtimeStats.lastResponseStatus = res.statusCode;
 
     const durationMs = Date.now() - requestStartedAtMs;
     if (durationMs > runtimeStats.maxObservedRequestDurationMs) {
       runtimeStats.maxObservedRequestDurationMs = durationMs;
     }
+    return true;
+  };
+
+  const recordRequestCompletion = () => {
+    if (!finalizeTrackedRequest()) return;
+    runtimeStats.completedRequests += 1;
+    runtimeStats.lastRequestCompletedAt = new Date().toISOString();
+    runtimeStats.lastResponseStatus = res.statusCode;
+  };
+
+  const recordRequestAbort = () => {
+    if (!finalizeTrackedRequest()) return;
+    runtimeStats.abortedRequests += 1;
   };
 
   res.on("finish", recordRequestCompletion);
-  res.on("close", recordRequestCompletion);
-  res.on("error", recordRequestCompletion);
-  req.on("aborted", recordRequestCompletion);
+  res.on("close", recordRequestAbort);
+  res.on("error", recordRequestAbort);
+  req.on("aborted", recordRequestAbort);
 
   req.setTimeout(REQUEST_TIMEOUT_MS);
   res.setTimeout(REQUEST_TIMEOUT_MS);
@@ -6130,6 +6113,7 @@ const handleHealth = (req, res) => {
       inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
+      abortedRequests: runtimeStats.abortedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
@@ -6186,6 +6170,7 @@ const handleLiveness = (req, res) => {
       inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
+      abortedRequests: runtimeStats.abortedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
