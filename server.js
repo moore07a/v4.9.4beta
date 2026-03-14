@@ -100,6 +100,41 @@ const runtimeStats = {
   lastServerError: null,
   lastProcessWarning: null
 };
+const activeTrackedRequests = new Map();
+let nextTrackedRequestId = 1;
+
+function getTrackedInFlightCount() {
+  return activeTrackedRequests.size;
+}
+
+function sanitizeRequestPath(value) {
+  const raw = String(value || '/');
+  const noQuery = raw.split('?')[0].split('#')[0] || '/';
+  return safeLogValue(noQuery, 180);
+}
+
+function getEventTimestamp(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  return typeof meta.at === 'string' ? meta.at : null;
+}
+
+function shouldTrackRuntimeRequest(req) {
+  const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  if (
+    pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false })
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function summarizeError(error, maxLen = 220) {
+  if (error == null) return null;
+  const value = String(error && error.stack ? error.stack : error);
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
 
 function sanitizeRequestPath(value) {
   const raw = String(value || '/');
@@ -219,10 +254,12 @@ const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() 
 app.use((req, res, next) => {
   const requestStartedAtMs = Date.now();
   const trackRuntimeRequest = shouldTrackRuntimeRequest(req);
+  const trackedRequestId = trackRuntimeRequest ? nextTrackedRequestId++ : null;
 
   if (trackRuntimeRequest) {
     runtimeStats.totalRequests += 1;
-    runtimeStats.inFlightRequests += 1;
+    activeTrackedRequests.set(trackedRequestId, requestStartedAtMs);
+    runtimeStats.inFlightRequests = getTrackedInFlightCount();
     runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
     runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
   }
@@ -231,7 +268,8 @@ app.use((req, res, next) => {
   const recordRequestCompletion = () => {
     if (!trackRuntimeRequest || requestAccounted) return;
     requestAccounted = true;
-    runtimeStats.inFlightRequests = Math.max(0, runtimeStats.inFlightRequests - 1);
+    activeTrackedRequests.delete(trackedRequestId);
+    runtimeStats.inFlightRequests = getTrackedInFlightCount();
     runtimeStats.completedRequests += 1;
     runtimeStats.lastRequestCompletedAt = new Date().toISOString();
     runtimeStats.lastResponseStatus = res.statusCode;
@@ -244,6 +282,8 @@ app.use((req, res, next) => {
 
   res.on("finish", recordRequestCompletion);
   res.on("close", recordRequestCompletion);
+  res.on("error", recordRequestCompletion);
+  req.on("aborted", recordRequestCompletion);
 
   req.setTimeout(REQUEST_TIMEOUT_MS);
   res.setTimeout(REQUEST_TIMEOUT_MS);
@@ -6063,12 +6103,14 @@ if (OPTIONAL_URL_PREFIX) {
   app.post(withOptionalUrlPrefix("/decrypt-challenge-data"), express.json({ limit: "1kb" }), handleDecryptChallengeData);
 }
 
-const handleHealth = (_req, res) => {
+const handleHealth = (req, res) => {
   const turnstileHealthy = _health.ok !== false;
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
-  const inFlightExcludingCurrent = runtimeStats.inFlightRequests;
+  const currentRequestIsTracked = shouldTrackRuntimeRequest(req) ? 1 : 0;
+  const inFlightRequests = getTrackedInFlightCount();
+  const inFlightExcludingCurrent = Math.max(0, inFlightRequests - currentRequestIsTracked);
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
@@ -6085,7 +6127,7 @@ const handleHealth = (_req, res) => {
       bootId: runtimeStats.bootId,
       startedAt: runtimeStats.startedAt,
       totalRequests: runtimeStats.totalRequests,
-      inFlightRequests: runtimeStats.inFlightRequests,
+      inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
@@ -6120,9 +6162,11 @@ const handleHealth = (_req, res) => {
   });
 };
 
-const handleLiveness = (_req, res) => {
+const handleLiveness = (req, res) => {
   const usage = getRuntimeUsageSnapshot();
-  const inFlightExcludingCurrent = runtimeStats.inFlightRequests;
+  const currentRequestIsTracked = shouldTrackRuntimeRequest(req) ? 1 : 0;
+  const inFlightRequests = getTrackedInFlightCount();
+  const inFlightExcludingCurrent = Math.max(0, inFlightRequests - currentRequestIsTracked);
 
   res.status(200).json({
     ok: true,
@@ -6139,7 +6183,7 @@ const handleLiveness = (_req, res) => {
       bootId: runtimeStats.bootId,
       startedAt: runtimeStats.startedAt,
       totalRequests: runtimeStats.totalRequests,
-      inFlightRequests: runtimeStats.inFlightRequests,
+      inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
