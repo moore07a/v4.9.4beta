@@ -101,21 +101,15 @@ const runtimeStats = {
   lastProcessWarning: null
 };
 
-let runtimeRequestSeq = 0;
-const activeRuntimeRequests = new Map();
+function sanitizeRequestPath(value) {
+  const raw = String(value || '/');
+  const noQuery = raw.split('?')[0].split('#')[0] || '/';
+  return safeLogValue(noQuery, 180);
+}
 
-function captureActiveRequestSnapshot(excludeRequestId = null, limit = 5) {
-  const now = Date.now();
-  return Array.from(activeRuntimeRequests.entries())
-    .filter(([id]) => id !== excludeRequestId)
-    .map(([id, meta]) => ({
-      id,
-      method: meta.method,
-      path: meta.path,
-      ageMs: Math.max(0, now - meta.startedAtMs)
-    }))
-    .sort((a, b) => b.ageMs - a.ageMs)
-    .slice(0, limit);
+function getEventTimestamp(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  return typeof meta.at === 'string' ? meta.at : null;
 }
 
 function summarizeError(error, maxLen = 220) {
@@ -212,26 +206,17 @@ const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() 
 // ------------ Enhanced Global Security Headers ---------------
 app.use((req, res, next) => {
   const requestStartedAtMs = Date.now();
-  const runtimeRequestId = ++runtimeRequestSeq;
-  req.__runtimeRequestId = runtimeRequestId;
-
   runtimeStats.totalRequests += 1;
   runtimeStats.inFlightRequests += 1;
   runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
-  runtimeStats.lastRequestPath = safeLogValue(req.originalUrl || req.url || req.path || "-", 180);
+  runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
 
-  activeRuntimeRequests.set(runtimeRequestId, {
-    startedAtMs: requestStartedAtMs,
-    method: safeLogValue(req.method || "GET", 12),
-    path: safeLogValue(req.originalUrl || req.url || req.path || "-", 180)
-  });
 
   let requestAccounted = false;
   const recordRequestCompletion = () => {
     if (requestAccounted) return;
     requestAccounted = true;
     runtimeStats.inFlightRequests = Math.max(0, runtimeStats.inFlightRequests - 1);
-    activeRuntimeRequests.delete(runtimeRequestId);
     runtimeStats.completedRequests += 1;
     runtimeStats.lastRequestCompletedAt = new Date().toISOString();
     runtimeStats.lastResponseStatus = res.statusCode;
@@ -6063,14 +6048,12 @@ if (OPTIONAL_URL_PREFIX) {
   app.post(withOptionalUrlPrefix("/decrypt-challenge-data"), express.json({ limit: "1kb" }), handleDecryptChallengeData);
 }
 
-const handleHealth = (req, res) => {
+const handleHealth = (_req, res) => {
   const turnstileHealthy = _health.ok !== false;
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
-  const selfRequestId = req && req.__runtimeRequestId ? req.__runtimeRequestId : null;
-  const activeRequestSample = captureActiveRequestSnapshot(selfRequestId);
-  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - (selfRequestId ? 1 : 0));
+  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - 1);
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
@@ -6090,7 +6073,6 @@ const handleHealth = (req, res) => {
       inFlightRequests: runtimeStats.inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
-      activeRequestSample,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
@@ -6104,11 +6086,11 @@ const handleHealth = (req, res) => {
       lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
       lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
       lastTurnstileError: runtimeStats.lastTurnstileError,
-      lastUnhandledRejection: runtimeStats.lastUnhandledRejection,
-      lastUncaughtException: runtimeStats.lastUncaughtException,
-      lastServerClientError: runtimeStats.lastServerClientError,
-      lastServerError: runtimeStats.lastServerError,
-      lastProcessWarning: runtimeStats.lastProcessWarning,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     },
@@ -6123,11 +6105,9 @@ const handleHealth = (req, res) => {
   });
 };
 
-const handleLiveness = (req, res) => {
+const handleLiveness = (_req, res) => {
   const usage = getRuntimeUsageSnapshot();
-  const selfRequestId = req && req.__runtimeRequestId ? req.__runtimeRequestId : null;
-  const activeRequestSample = captureActiveRequestSnapshot(selfRequestId);
-  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - (selfRequestId ? 1 : 0));
+  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - 1);
 
   res.status(200).json({
     ok: true,
@@ -6147,7 +6127,6 @@ const handleLiveness = (req, res) => {
       inFlightRequests: runtimeStats.inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
-      activeRequestSample,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
@@ -6161,11 +6140,11 @@ const handleLiveness = (req, res) => {
       lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
       lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
       lastTurnstileError: runtimeStats.lastTurnstileError,
-      lastUnhandledRejection: runtimeStats.lastUnhandledRejection,
-      lastUncaughtException: runtimeStats.lastUncaughtException,
-      lastServerClientError: runtimeStats.lastServerClientError,
-      lastServerError: runtimeStats.lastServerError,
-      lastProcessWarning: runtimeStats.lastProcessWarning,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     }
