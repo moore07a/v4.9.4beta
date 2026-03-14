@@ -2763,6 +2763,7 @@ function headlessSuspicion(req){
 const TURNSTILE_SITEKEY = normalizeTurnstileEnv(process.env.TURNSTILE_SITEKEY);
 const TURNSTILE_SECRET  = normalizeTurnstileEnv(process.env.TURNSTILE_SECRET);
 const TURNSTILE_ORIGIN  = "https://challenges.cloudflare.com";
+const EXPOSE_TURNSTILE_SITEKEY_ENDPOINT = String(process.env.EXPOSE_TURNSTILE_SITEKEY_ENDPOINT || "").trim().toLowerCase() === "true";
 if (!TURNSTILE_SITEKEY || !TURNSTILE_SECRET) {
   console.error("❌ TURNSTILE_SITEKEY and TURNSTILE_SECRET must be set.");
   process.exit(1);
