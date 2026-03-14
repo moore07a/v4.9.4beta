@@ -136,6 +136,35 @@ function summarizeError(error, maxLen = 220) {
   return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
 }
 
+function sanitizeRequestPath(value) {
+  const raw = String(value || '/');
+  const noQuery = raw.split('?')[0].split('#')[0] || '/';
+  return safeLogValue(noQuery, 180);
+}
+
+function getEventTimestamp(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  return typeof meta.at === 'string' ? meta.at : null;
+}
+
+function shouldTrackRuntimeRequest(req) {
+  const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  if (
+    pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false })
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function summarizeError(error, maxLen = 220) {
+  if (error == null) return null;
+  const value = String(error && error.stack ? error.stack : error);
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
+
 let cpuSnapshot = {
   timeNs: process.hrtime.bigint(),
   usage: process.cpuUsage()
