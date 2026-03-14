@@ -82,6 +82,7 @@ const runtimeStats = {
   inFlightRequests: 0,
   completedRequests: 0,
   abortedRequests: 0,
+  staleTrackedRequestsPruned: 0,
   lastRequestStartedAt: null,
   lastRequestCompletedAt: null,
   lastRequestPath: null,
@@ -103,8 +104,20 @@ const runtimeStats = {
 };
 const activeTrackedRequests = new Map();
 let nextTrackedRequestId = 1;
+const TRACKED_REQUEST_STALE_GRACE_MS = 5000;
+
+function pruneStaleTrackedRequests(nowMs = Date.now()) {
+  const staleThresholdMs = REQUEST_TIMEOUT_MS + TRACKED_REQUEST_STALE_GRACE_MS;
+  for (const [trackedRequestId, startedAtMs] of activeTrackedRequests.entries()) {
+    if (!Number.isFinite(startedAtMs)) continue;
+    if (nowMs - startedAtMs <= staleThresholdMs) continue;
+    activeTrackedRequests.delete(trackedRequestId);
+    runtimeStats.staleTrackedRequestsPruned += 1;
+  }
+}
 
 function getTrackedInFlightCount() {
+  pruneStaleTrackedRequests();
   return activeTrackedRequests.size;
 }
 
@@ -125,7 +138,9 @@ function shouldTrackRuntimeRequest(req) {
   if (
     pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
     pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
-    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false })
+    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/stream-log', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/view-log', { allowChildren: false })
   ) {
     return false;
   }
@@ -6114,6 +6129,7 @@ const handleHealth = (req, res) => {
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
       abortedRequests: runtimeStats.abortedRequests,
+      staleTrackedRequestsPruned: runtimeStats.staleTrackedRequestsPruned,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
@@ -6171,6 +6187,7 @@ const handleLiveness = (req, res) => {
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
       abortedRequests: runtimeStats.abortedRequests,
+      staleTrackedRequestsPruned: runtimeStats.staleTrackedRequestsPruned,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
