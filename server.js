@@ -124,6 +124,27 @@ function getTrackedInFlightCount() {
 function sanitizeRequestPath(value) {
   const raw = String(value || '/');
   const noQuery = raw.split('?')[0].split('#')[0] || '/';
+
+  const candidate = noQuery.startsWith('/') ? noQuery.slice(1) : noQuery;
+  const { payloadPath } = stripOptionalUrlPrefix(candidate);
+  const normalizedPayloadPath = String(payloadPath || '').replace(/^\/+/, '');
+
+  if (normalizedPayloadPath.startsWith('tr/cl/')) {
+    return '/tr/cl/[redacted]';
+  }
+  if (normalizedPayloadPath.startsWith('e/')) {
+    return '/e/[redacted]';
+  }
+
+  if (
+    normalizedPayloadPath &&
+    !normalizedPayloadPath.includes('/') &&
+    normalizedPayloadPath.length > 48 &&
+    /^[A-Za-z0-9_-]+=*$/.test(normalizedPayloadPath)
+  ) {
+    return '/[encoded-redacted]';
+  }
+
   return safeLogValue(noQuery, 180);
 }
 
