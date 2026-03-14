@@ -145,6 +145,23 @@ function sanitizeRequestPath(value) {
     return '/[encoded-redacted]';
   }
 
+  const looksLikeSplitEncodedPayload = (() => {
+    if (!normalizedPayloadPath.includes('//')) return false;
+    const [left, right] = normalizedPayloadPath.split('//', 2);
+    if (!left || !right) return false;
+    if (left.length < 24 || right.length < 8) return false;
+    const leftLooksEncoded = /^[A-Za-z0-9_-]+=*$/.test(left);
+    const rightLooksEncoded = /^[A-Za-z0-9_-]+=*$/.test(right);
+    return leftLooksEncoded && rightLooksEncoded;
+  })();
+
+  if (looksLikeSplitEncodedPayload) {
+    if (candidate.toLowerCase().startsWith('tr/cl/')) {
+      return '/tr/cl/[redacted]';
+    }
+    return '/[encoded-redacted]';
+  }
+
   if (
     /^(cgi-bin|storage\/logs|phpmyadmin|wp-admin|wp-login\.php|\.env|vendor\/phpunit|actuator|server-status|hnap1|boaform)\b/i.test(normalizedPayloadPath) ||
     normalizedPayloadPath.includes('..')
