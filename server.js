@@ -140,7 +140,26 @@ function shouldTrackRuntimeRequest(req) {
     pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
     pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false }) ||
     pathMatchesWithOptionalPrefix(pathValue, '/stream-log', { allowChildren: false }) ||
-    pathMatchesWithOptionalPrefix(pathValue, '/view-log', { allowChildren: false })
+    pathMatchesWithOptionalPrefix(pathValue, '/view-log', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/view-log-live', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/geo-debug', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/ts-client-log', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/interstitial-human', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/challenge', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/challenge-fragment', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/decrypt-challenge-data', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/turnstile-sitekey', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/api/v1/status', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_collect', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_interact', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_analytics.gif', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_debug', { allowChildren: true }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/__debug', { allowChildren: true }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/admin', { allowChildren: true }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/__hp.gif', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/favicon.ico', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/robots.txt', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/sitemap.xml', { allowChildren: false })
   ) {
     return false;
   }
