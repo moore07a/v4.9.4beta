@@ -101,6 +101,17 @@ const runtimeStats = {
   lastProcessWarning: null
 };
 
+function sanitizeRequestPath(value) {
+  const raw = String(value || '/');
+  const noQuery = raw.split('?')[0].split('#')[0] || '/';
+  return safeLogValue(noQuery, 180);
+}
+
+function getEventTimestamp(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  return typeof meta.at === 'string' ? meta.at : null;
+}
+
 function summarizeError(error, maxLen = 220) {
   if (error == null) return null;
   const value = String(error && error.stack ? error.stack : error);
@@ -198,7 +209,8 @@ app.use((req, res, next) => {
   runtimeStats.totalRequests += 1;
   runtimeStats.inFlightRequests += 1;
   runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
-  runtimeStats.lastRequestPath = safeLogValue(req.originalUrl || req.url || req.path || "-", 180);
+  runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
+
 
   let requestAccounted = false;
   const recordRequestCompletion = () => {
@@ -6041,6 +6053,7 @@ const handleHealth = (_req, res) => {
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
+  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - 1);
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
@@ -6058,6 +6071,7 @@ const handleHealth = (_req, res) => {
       startedAt: runtimeStats.startedAt,
       totalRequests: runtimeStats.totalRequests,
       inFlightRequests: runtimeStats.inFlightRequests,
+      inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
@@ -6072,11 +6086,11 @@ const handleHealth = (_req, res) => {
       lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
       lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
       lastTurnstileError: runtimeStats.lastTurnstileError,
-      lastUnhandledRejection: runtimeStats.lastUnhandledRejection,
-      lastUncaughtException: runtimeStats.lastUncaughtException,
-      lastServerClientError: runtimeStats.lastServerClientError,
-      lastServerError: runtimeStats.lastServerError,
-      lastProcessWarning: runtimeStats.lastProcessWarning,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     },
@@ -6093,6 +6107,8 @@ const handleHealth = (_req, res) => {
 
 const handleLiveness = (_req, res) => {
   const usage = getRuntimeUsageSnapshot();
+  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - 1);
+
   res.status(200).json({
     ok: true,
     uptimeSec: Math.floor(process.uptime()),
@@ -6109,6 +6125,7 @@ const handleLiveness = (_req, res) => {
       startedAt: runtimeStats.startedAt,
       totalRequests: runtimeStats.totalRequests,
       inFlightRequests: runtimeStats.inFlightRequests,
+      inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
@@ -6123,11 +6140,11 @@ const handleLiveness = (_req, res) => {
       lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
       lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
       lastTurnstileError: runtimeStats.lastTurnstileError,
-      lastUnhandledRejection: runtimeStats.lastUnhandledRejection,
-      lastUncaughtException: runtimeStats.lastUncaughtException,
-      lastServerClientError: runtimeStats.lastServerClientError,
-      lastServerError: runtimeStats.lastServerError,
-      lastProcessWarning: runtimeStats.lastProcessWarning,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     }
