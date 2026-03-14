@@ -2763,6 +2763,7 @@ function headlessSuspicion(req){
 const TURNSTILE_SITEKEY = normalizeTurnstileEnv(process.env.TURNSTILE_SITEKEY);
 const TURNSTILE_SECRET  = normalizeTurnstileEnv(process.env.TURNSTILE_SECRET);
 const TURNSTILE_ORIGIN  = "https://challenges.cloudflare.com";
+const EXPOSE_TURNSTILE_SITEKEY_ENDPOINT = String(process.env.EXPOSE_TURNSTILE_SITEKEY_ENDPOINT || "").trim().toLowerCase() === "true";
 if (!TURNSTILE_SITEKEY || !TURNSTILE_SECRET) {
   console.error("❌ TURNSTILE_SITEKEY and TURNSTILE_SECRET must be set.");
   process.exit(1);
@@ -6643,7 +6644,12 @@ app.get("/robots.txt", (req, res) => {
   return res.send("User-agent: *\nDisallow: /\n");
 });
 
-app.get("/turnstile-sitekey", (_req, res) => res.json({ sitekey: TURNSTILE_SITEKEY }));
+app.get("/turnstile-sitekey", (req, res) => {
+  if (EXPOSE_TURNSTILE_SITEKEY_ENDPOINT || isAdmin(req)) {
+    return res.json({ sitekey: TURNSTILE_SITEKEY });
+  }
+  return res.status(404).type("text/plain").send("Not Found");
+});
 
 app.get("/__debug/key", requireAdmin, (req, res) => {
   const items = AES_KEYS.map((buf, idx) => {
