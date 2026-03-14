@@ -7650,6 +7650,7 @@ server.on("error", (error) => {
     message: summarizeError(error)
   };
   addLog(`[SERVER] error ${safeLogValue(summarizeError(error), 180)}`);
+  scheduleFatalExit("server.error", error);
 });
 
 process.on("unhandledRejection", (reason) => {
