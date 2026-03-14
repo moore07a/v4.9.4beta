@@ -112,16 +112,14 @@ function getEventTimestamp(meta) {
   return typeof meta.at === 'string' ? meta.at : null;
 }
 
-function isInternalHealthPath(pathname) {
-  return pathname === '/health' || pathname === '/readyz' || pathname === '/healthz';
-}
-
 function shouldTrackRuntimeRequest(req) {
   const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
-  if (isInternalHealthPath(pathValue)) return false;
-  if (OPTIONAL_URL_PREFIX && pathValue.startsWith(`${OPTIONAL_URL_PREFIX}/`)) {
-    const suffix = pathValue.slice(OPTIONAL_URL_PREFIX.length);
-    if (isInternalHealthPath(suffix)) return false;
+  if (
+    pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false })
+  ) {
+    return false;
   }
   return true;
 }
