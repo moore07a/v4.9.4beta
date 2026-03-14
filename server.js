@@ -7627,6 +7627,7 @@ process.on("unhandledRejection", (reason) => {
     reason: summarizeError(reason)
   };
   addLog(`[PROCESS] unhandledRejection ${safeLogValue(summarizeError(reason), 180)}`);
+  scheduleFatalExit("unhandledRejection", reason);
 });
 
 process.on("uncaughtException", (error) => {
@@ -7636,6 +7637,7 @@ process.on("uncaughtException", (error) => {
     message: summarizeError(error)
   };
   addLog(`[PROCESS] uncaughtException ${safeLogValue(summarizeError(error), 180)}`);
+  scheduleFatalExit("uncaughtException", error);
 });
 
 process.on("warning", (warning) => {
@@ -7647,6 +7649,20 @@ process.on("warning", (warning) => {
   };
   addLog(`[PROCESS] warning name=${safeLogValue(warning && warning.name ? warning.name : "Warning", 80)} msg=${safeLogValue(summarizeError(warning && warning.message ? warning.message : warning), 180)}`);
 });
+
+let fatalExitScheduled = false;
+function scheduleFatalExit(origin, details) {
+  if (fatalExitScheduled) return;
+  fatalExitScheduled = true;
+
+  const summary = safeLogValue(summarizeError(details), 180);
+  addLog(`[FATAL] ${safeLogValue(origin, 64)} scheduling process exit summary=${summary}`);
+
+  setImmediate(() => {
+    process.exitCode = 1;
+    process.exit(1);
+  });
+}
 
 let isShuttingDown = false;
 async function gracefulShutdown(signal) {
