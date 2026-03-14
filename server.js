@@ -70,8 +70,22 @@ const EMAIL_DISPLAY_MAX_LENGTH = 80;
 const URL_DISPLAY_MAX_LENGTH = 120;
 const runtimeStats = {
   requestTimeouts: 0,
-  shutdownSignals: 0
+  shutdownSignals: 0,
+  uncaughtExceptions: 0,
+  unhandledRejections: 0,
+  serverClientErrors: 0,
+  serverErrors: 0,
+  lastUnhandledRejection: null,
+  lastUncaughtException: null,
+  lastServerClientError: null,
+  lastServerError: null
 };
+
+function summarizeError(error, maxLen = 220) {
+  if (error == null) return null;
+  const value = String(error && error.stack ? error.stack : error);
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
 
 let cpuSnapshot = {
   timeNs: process.hrtime.bigint(),
@@ -5991,6 +6005,14 @@ const handleHealth = (_req, res) => {
     stats: {
       requestTimeouts: runtimeStats.requestTimeouts,
       shutdownSignals: runtimeStats.shutdownSignals,
+      uncaughtExceptions: runtimeStats.uncaughtExceptions,
+      unhandledRejections: runtimeStats.unhandledRejections,
+      serverClientErrors: runtimeStats.serverClientErrors,
+      serverErrors: runtimeStats.serverErrors,
+      lastUnhandledRejection: runtimeStats.lastUnhandledRejection,
+      lastUncaughtException: runtimeStats.lastUncaughtException,
+      lastServerClientError: runtimeStats.lastServerClientError,
+      lastServerError: runtimeStats.lastServerError,
       cpu: usage.cpu,
       memory: usage.memory
     },
@@ -6014,6 +6036,14 @@ const handleLiveness = (_req, res) => {
     stats: {
       requestTimeouts: runtimeStats.requestTimeouts,
       shutdownSignals: runtimeStats.shutdownSignals,
+      uncaughtExceptions: runtimeStats.uncaughtExceptions,
+      unhandledRejections: runtimeStats.unhandledRejections,
+      serverClientErrors: runtimeStats.serverClientErrors,
+      serverErrors: runtimeStats.serverErrors,
+      lastUnhandledRejection: runtimeStats.lastUnhandledRejection,
+      lastUncaughtException: runtimeStats.lastUncaughtException,
+      lastServerClientError: runtimeStats.lastServerClientError,
+      lastServerError: runtimeStats.lastServerError,
       cpu: usage.cpu,
       memory: usage.memory
     }
@@ -7457,6 +7487,48 @@ const server = app.listen(PORT, async () => {
 
 server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
 server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+
+server.on("clientError", (error, socket) => {
+  runtimeStats.serverClientErrors += 1;
+  runtimeStats.lastServerClientError = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[SERVER] clientError ${safeLogValue(summarizeError(error), 180)}`);
+
+  if (socket && socket.writable) {
+    try {
+      socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    } catch (_) {}
+  }
+});
+
+server.on("error", (error) => {
+  runtimeStats.serverErrors += 1;
+  runtimeStats.lastServerError = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[SERVER] error ${safeLogValue(summarizeError(error), 180)}`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  runtimeStats.unhandledRejections += 1;
+  runtimeStats.lastUnhandledRejection = {
+    at: new Date().toISOString(),
+    reason: summarizeError(reason)
+  };
+  addLog(`[PROCESS] unhandledRejection ${safeLogValue(summarizeError(reason), 180)}`);
+});
+
+process.on("uncaughtException", (error) => {
+  runtimeStats.uncaughtExceptions += 1;
+  runtimeStats.lastUncaughtException = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[PROCESS] uncaughtException ${safeLogValue(summarizeError(error), 180)}`);
+});
 
 let isShuttingDown = false;
 async function gracefulShutdown(signal) {
