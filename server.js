@@ -69,9 +69,68 @@ const LOG_ENTRY_MAX_LENGTH = 300;
 const EMAIL_DISPLAY_MAX_LENGTH = 80;
 const URL_DISPLAY_MAX_LENGTH = 120;
 const runtimeStats = {
+  bootId: crypto.randomUUID(),
+  startedAt: new Date().toISOString(),
   requestTimeouts: 0,
-  shutdownSignals: 0
+  shutdownSignals: 0,
+  uncaughtExceptions: 0,
+  unhandledRejections: 0,
+  processWarnings: 0,
+  serverClientErrors: 0,
+  serverErrors: 0,
+  totalRequests: 0,
+  inFlightRequests: 0,
+  completedRequests: 0,
+  lastRequestStartedAt: null,
+  lastRequestCompletedAt: null,
+  lastRequestPath: null,
+  lastResponseStatus: null,
+  maxObservedRequestDurationMs: 0,
+  maxObservedEventLoopLagMs: 0,
+  lastEventLoopLagAt: null,
+  turnstileChecks: 0,
+  turnstileCheckErrors: 0,
+  turnstileCheckTimeouts: 0,
+  lastTurnstileCheckAt: null,
+  lastTurnstileLatencyMs: null,
+  lastTurnstileError: null,
+  lastUnhandledRejection: null,
+  lastUncaughtException: null,
+  lastServerClientError: null,
+  lastServerError: null,
+  lastProcessWarning: null
 };
+
+function sanitizeRequestPath(value) {
+  const raw = String(value || '/');
+  const noQuery = raw.split('?')[0].split('#')[0] || '/';
+  return safeLogValue(noQuery, 180);
+}
+
+function getEventTimestamp(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  return typeof meta.at === 'string' ? meta.at : null;
+}
+
+function isInternalHealthPath(pathname) {
+  return pathname === '/health' || pathname === '/readyz' || pathname === '/healthz';
+}
+
+function shouldTrackRuntimeRequest(req) {
+  const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  if (isInternalHealthPath(pathValue)) return false;
+  if (OPTIONAL_URL_PREFIX && pathValue.startsWith(`${OPTIONAL_URL_PREFIX}/`)) {
+    const suffix = pathValue.slice(OPTIONAL_URL_PREFIX.length);
+    if (isInternalHealthPath(suffix)) return false;
+  }
+  return true;
+}
+
+function summarizeError(error, maxLen = 220) {
+  if (error == null) return null;
+  const value = String(error && error.stack ? error.stack : error);
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
 
 let cpuSnapshot = {
   timeNs: process.hrtime.bigint(),
@@ -160,6 +219,34 @@ const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() 
 
 // ------------ Enhanced Global Security Headers ---------------
 app.use((req, res, next) => {
+  const requestStartedAtMs = Date.now();
+  const trackRuntimeRequest = shouldTrackRuntimeRequest(req);
+
+  if (trackRuntimeRequest) {
+    runtimeStats.totalRequests += 1;
+    runtimeStats.inFlightRequests += 1;
+    runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
+    runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
+  }
+
+  let requestAccounted = false;
+  const recordRequestCompletion = () => {
+    if (!trackRuntimeRequest || requestAccounted) return;
+    requestAccounted = true;
+    runtimeStats.inFlightRequests = Math.max(0, runtimeStats.inFlightRequests - 1);
+    runtimeStats.completedRequests += 1;
+    runtimeStats.lastRequestCompletedAt = new Date().toISOString();
+    runtimeStats.lastResponseStatus = res.statusCode;
+
+    const durationMs = Date.now() - requestStartedAtMs;
+    if (durationMs > runtimeStats.maxObservedRequestDurationMs) {
+      runtimeStats.maxObservedRequestDurationMs = durationMs;
+    }
+  };
+
+  res.on("finish", recordRequestCompletion);
+  res.on("close", recordRequestCompletion);
+
   req.setTimeout(REQUEST_TIMEOUT_MS);
   res.setTimeout(REQUEST_TIMEOUT_MS);
 
@@ -5983,6 +6070,7 @@ const handleHealth = (_req, res) => {
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
+  const inFlightExcludingCurrent = runtimeStats.inFlightRequests;
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
@@ -5991,6 +6079,35 @@ const handleHealth = (_req, res) => {
     stats: {
       requestTimeouts: runtimeStats.requestTimeouts,
       shutdownSignals: runtimeStats.shutdownSignals,
+      processWarnings: runtimeStats.processWarnings,
+      uncaughtExceptions: runtimeStats.uncaughtExceptions,
+      unhandledRejections: runtimeStats.unhandledRejections,
+      serverClientErrors: runtimeStats.serverClientErrors,
+      serverErrors: runtimeStats.serverErrors,
+      bootId: runtimeStats.bootId,
+      startedAt: runtimeStats.startedAt,
+      totalRequests: runtimeStats.totalRequests,
+      inFlightRequests: runtimeStats.inFlightRequests,
+      inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
+      completedRequests: runtimeStats.completedRequests,
+      lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
+      lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
+      lastRequestPath: runtimeStats.lastRequestPath,
+      lastResponseStatus: runtimeStats.lastResponseStatus,
+      maxObservedRequestDurationMs: runtimeStats.maxObservedRequestDurationMs,
+      maxObservedEventLoopLagMs: runtimeStats.maxObservedEventLoopLagMs,
+      lastEventLoopLagAt: runtimeStats.lastEventLoopLagAt,
+      turnstileChecks: runtimeStats.turnstileChecks,
+      turnstileCheckErrors: runtimeStats.turnstileCheckErrors,
+      turnstileCheckTimeouts: runtimeStats.turnstileCheckTimeouts,
+      lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
+      lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
+      lastTurnstileError: runtimeStats.lastTurnstileError,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     },
@@ -6007,6 +6124,8 @@ const handleHealth = (_req, res) => {
 
 const handleLiveness = (_req, res) => {
   const usage = getRuntimeUsageSnapshot();
+  const inFlightExcludingCurrent = runtimeStats.inFlightRequests;
+
   res.status(200).json({
     ok: true,
     uptimeSec: Math.floor(process.uptime()),
@@ -6014,6 +6133,35 @@ const handleLiveness = (_req, res) => {
     stats: {
       requestTimeouts: runtimeStats.requestTimeouts,
       shutdownSignals: runtimeStats.shutdownSignals,
+      processWarnings: runtimeStats.processWarnings,
+      uncaughtExceptions: runtimeStats.uncaughtExceptions,
+      unhandledRejections: runtimeStats.unhandledRejections,
+      serverClientErrors: runtimeStats.serverClientErrors,
+      serverErrors: runtimeStats.serverErrors,
+      bootId: runtimeStats.bootId,
+      startedAt: runtimeStats.startedAt,
+      totalRequests: runtimeStats.totalRequests,
+      inFlightRequests: runtimeStats.inFlightRequests,
+      inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
+      completedRequests: runtimeStats.completedRequests,
+      lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
+      lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
+      lastRequestPath: runtimeStats.lastRequestPath,
+      lastResponseStatus: runtimeStats.lastResponseStatus,
+      maxObservedRequestDurationMs: runtimeStats.maxObservedRequestDurationMs,
+      maxObservedEventLoopLagMs: runtimeStats.maxObservedEventLoopLagMs,
+      lastEventLoopLagAt: runtimeStats.lastEventLoopLagAt,
+      turnstileChecks: runtimeStats.turnstileChecks,
+      turnstileCheckErrors: runtimeStats.turnstileCheckErrors,
+      turnstileCheckTimeouts: runtimeStats.turnstileCheckTimeouts,
+      lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
+      lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
+      lastTurnstileError: runtimeStats.lastTurnstileError,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     }
@@ -7268,6 +7416,11 @@ function startEventLoopLagMonitor() {
     const lag = now - expected;
     expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
 
+    if (lag > runtimeStats.maxObservedEventLoopLagMs) {
+      runtimeStats.maxObservedEventLoopLagMs = lag;
+      runtimeStats.lastEventLoopLagAt = new Date(now).toISOString();
+    }
+
     if (lag < EVENT_LOOP_LAG_WARN_MS) return;
 
     const mem = process.memoryUsage();
@@ -7363,10 +7516,16 @@ async function checkTurnstileReachable() {
   _health.inflight = true;
 
   const now = Date.now();
+  const startedAtMs = Date.now();
+  runtimeStats.turnstileChecks += 1;
+  runtimeStats.lastTurnstileCheckAt = new Date(startedAtMs).toISOString();
+
   try {
     const url = `${TURNSTILE_ORIGIN}/turnstile/v0/api.js`;
     const r = await fetchWithTimeout(url, { method: "HEAD" }, process.env.TURNSTILE_HEALTH_TIMEOUT_MS || 5000);
     const ok = r.ok;
+    runtimeStats.lastTurnstileLatencyMs = Date.now() - startedAtMs;
+    runtimeStats.lastTurnstileError = null;
 
     if (ok) { _health.okStreak++; _health.failStreak = 0; }
     else    { _health.failStreak++; _health.okStreak  = 0; }
@@ -7380,6 +7539,18 @@ async function checkTurnstileReachable() {
       _health.lastHeartbeat = now;
     }
   } catch (e) {
+    runtimeStats.turnstileCheckErrors += 1;
+    const errSummary = summarizeError(e);
+    runtimeStats.lastTurnstileLatencyMs = Date.now() - startedAtMs;
+    runtimeStats.lastTurnstileError = {
+      at: new Date().toISOString(),
+      message: errSummary
+    };
+
+    if (errSummary && /timeout|aborted|aborterror/i.test(errSummary)) {
+      runtimeStats.turnstileCheckTimeouts += 1;
+    }
+
     _health.failStreak++; _health.okStreak = 0;
     if (_health.ok !== false) {
       addLog(`[HEALTH] turnstile HEAD error ${String(e)} (change)`);
@@ -7443,6 +7614,7 @@ const server = app.listen(PORT, async () => {
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
+  addLog(`[RUNTIME] bootId=${runtimeStats.bootId} startedAt=${runtimeStats.startedAt}`);
   addLog(startupSummary());
 
   // BYPASS status (CORRECT LOCATION)
@@ -7457,6 +7629,74 @@ const server = app.listen(PORT, async () => {
 
 server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
 server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+
+server.on("clientError", (error, socket) => {
+  runtimeStats.serverClientErrors += 1;
+  runtimeStats.lastServerClientError = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[SERVER] clientError ${safeLogValue(summarizeError(error), 180)}`);
+
+  if (socket && socket.writable) {
+    try {
+      socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    } catch (_) {}
+  }
+});
+
+server.on("error", (error) => {
+  runtimeStats.serverErrors += 1;
+  runtimeStats.lastServerError = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[SERVER] error ${safeLogValue(summarizeError(error), 180)}`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  runtimeStats.unhandledRejections += 1;
+  runtimeStats.lastUnhandledRejection = {
+    at: new Date().toISOString(),
+    reason: summarizeError(reason)
+  };
+  addLog(`[PROCESS] unhandledRejection ${safeLogValue(summarizeError(reason), 180)}`);
+  scheduleFatalExit("unhandledRejection", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  runtimeStats.uncaughtExceptions += 1;
+  runtimeStats.lastUncaughtException = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[PROCESS] uncaughtException ${safeLogValue(summarizeError(error), 180)}`);
+  scheduleFatalExit("uncaughtException", error);
+});
+
+process.on("warning", (warning) => {
+  runtimeStats.processWarnings += 1;
+  runtimeStats.lastProcessWarning = {
+    at: new Date().toISOString(),
+    name: safeLogValue(warning && warning.name ? warning.name : "Warning", 80),
+    message: summarizeError(warning && warning.message ? warning.message : warning)
+  };
+  addLog(`[PROCESS] warning name=${safeLogValue(warning && warning.name ? warning.name : "Warning", 80)} msg=${safeLogValue(summarizeError(warning && warning.message ? warning.message : warning), 180)}`);
+});
+
+let fatalExitScheduled = false;
+function scheduleFatalExit(origin, details) {
+  if (fatalExitScheduled) return;
+  fatalExitScheduled = true;
+
+  const summary = safeLogValue(summarizeError(details), 180);
+  addLog(`[FATAL] ${safeLogValue(origin, 64)} scheduling process exit summary=${summary}`);
+
+  setImmediate(() => {
+    process.exitCode = 1;
+    process.exit(1);
+  });
+}
 
 let isShuttingDown = false;
 async function gracefulShutdown(signal) {
