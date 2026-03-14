@@ -6645,7 +6645,7 @@ app.get("/robots.txt", (req, res) => {
 });
 
 app.get("/turnstile-sitekey", (req, res) => {
-  if (EXPOSE_TURNSTILE_SITEKEY_ENDPOINT || isAdmin(req)) {
+  if (isAdmin(req)) {
     return res.json({ sitekey: TURNSTILE_SITEKEY });
   }
   return res.status(404).type("text/plain").send("Not Found");
