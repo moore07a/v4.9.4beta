@@ -81,6 +81,7 @@ const runtimeStats = {
   totalRequests: 0,
   inFlightRequests: 0,
   completedRequests: 0,
+  abortedRequests: 0,
   lastRequestStartedAt: null,
   lastRequestCompletedAt: null,
   lastRequestPath: null,
@@ -237,25 +238,35 @@ app.use((req, res, next) => {
   }
 
   let requestAccounted = false;
-  const recordRequestCompletion = () => {
-    if (!trackRuntimeRequest || requestAccounted) return;
+  const finalizeTrackedRequest = () => {
+    if (!trackRuntimeRequest || requestAccounted) return false;
     requestAccounted = true;
     activeTrackedRequests.delete(trackedRequestId);
     runtimeStats.inFlightRequests = getTrackedInFlightCount();
-    runtimeStats.completedRequests += 1;
-    runtimeStats.lastRequestCompletedAt = new Date().toISOString();
-    runtimeStats.lastResponseStatus = res.statusCode;
 
     const durationMs = Date.now() - requestStartedAtMs;
     if (durationMs > runtimeStats.maxObservedRequestDurationMs) {
       runtimeStats.maxObservedRequestDurationMs = durationMs;
     }
+    return true;
+  };
+
+  const recordRequestCompletion = () => {
+    if (!finalizeTrackedRequest()) return;
+    runtimeStats.completedRequests += 1;
+    runtimeStats.lastRequestCompletedAt = new Date().toISOString();
+    runtimeStats.lastResponseStatus = res.statusCode;
+  };
+
+  const recordRequestAbort = () => {
+    if (!finalizeTrackedRequest()) return;
+    runtimeStats.abortedRequests += 1;
   };
 
   res.on("finish", recordRequestCompletion);
-  res.on("close", recordRequestCompletion);
-  res.on("error", recordRequestCompletion);
-  req.on("aborted", recordRequestCompletion);
+  res.on("close", recordRequestAbort);
+  res.on("error", recordRequestAbort);
+  req.on("aborted", recordRequestAbort);
 
   req.setTimeout(REQUEST_TIMEOUT_MS);
   res.setTimeout(REQUEST_TIMEOUT_MS);
@@ -6102,6 +6113,7 @@ const handleHealth = (req, res) => {
       inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
+      abortedRequests: runtimeStats.abortedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
@@ -6158,6 +6170,7 @@ const handleLiveness = (req, res) => {
       inFlightRequests,
       inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
       completedRequests: runtimeStats.completedRequests,
+      abortedRequests: runtimeStats.abortedRequests,
       lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
       lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
       lastRequestPath: runtimeStats.lastRequestPath,
