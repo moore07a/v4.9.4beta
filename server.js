@@ -69,9 +69,163 @@ const LOG_ENTRY_MAX_LENGTH = 300;
 const EMAIL_DISPLAY_MAX_LENGTH = 80;
 const URL_DISPLAY_MAX_LENGTH = 120;
 const runtimeStats = {
+  bootId: crypto.randomUUID(),
+  startedAt: new Date().toISOString(),
   requestTimeouts: 0,
-  shutdownSignals: 0
+  shutdownSignals: 0,
+  uncaughtExceptions: 0,
+  unhandledRejections: 0,
+  processWarnings: 0,
+  serverClientErrors: 0,
+  serverErrors: 0,
+  totalRequests: 0,
+  inFlightRequests: 0,
+  completedRequests: 0,
+  abortedRequests: 0,
+  staleTrackedRequestsPruned: 0,
+  lastRequestStartedAt: null,
+  lastRequestCompletedAt: null,
+  lastRequestPath: null,
+  lastResponseStatus: null,
+  maxObservedRequestDurationMs: 0,
+  maxObservedEventLoopLagMs: 0,
+  lastEventLoopLagAt: null,
+  turnstileChecks: 0,
+  turnstileCheckErrors: 0,
+  turnstileCheckTimeouts: 0,
+  lastTurnstileCheckAt: null,
+  lastTurnstileLatencyMs: null,
+  lastTurnstileError: null,
+  lastUnhandledRejection: null,
+  lastUncaughtException: null,
+  lastServerClientError: null,
+  lastServerError: null,
+  lastProcessWarning: null
 };
+const activeTrackedRequests = new Map();
+let nextTrackedRequestId = 1;
+const TRACKED_REQUEST_STALE_GRACE_MS = 5000;
+
+function pruneStaleTrackedRequests(nowMs = Date.now()) {
+  const staleThresholdMs = REQUEST_TIMEOUT_MS + TRACKED_REQUEST_STALE_GRACE_MS;
+  for (const [trackedRequestId, startedAtMs] of activeTrackedRequests.entries()) {
+    if (!Number.isFinite(startedAtMs)) continue;
+    if (nowMs - startedAtMs <= staleThresholdMs) continue;
+    activeTrackedRequests.delete(trackedRequestId);
+    runtimeStats.staleTrackedRequestsPruned += 1;
+  }
+}
+
+function getTrackedInFlightCount() {
+  pruneStaleTrackedRequests();
+  return activeTrackedRequests.size;
+}
+
+function sanitizeRequestPath(value) {
+  const raw = String(value || '/');
+  const noQuery = raw.split('?')[0].split('#')[0] || '/';
+
+  const candidate = noQuery.startsWith('/') ? noQuery.slice(1) : noQuery;
+  const { payloadPath } = stripOptionalUrlPrefix(candidate);
+  const normalizedPayloadPath = String(payloadPath || '').replace(/^\/+/, '');
+
+  if (normalizedPayloadPath.startsWith('tr/cl/')) {
+    return '/tr/cl/[redacted]';
+  }
+  if (normalizedPayloadPath.startsWith('e/')) {
+    return '/e/[redacted]';
+  }
+
+  if (
+    normalizedPayloadPath &&
+    !normalizedPayloadPath.includes('/') &&
+    normalizedPayloadPath.length > 48 &&
+    /^[A-Za-z0-9_-]+=*$/.test(normalizedPayloadPath)
+  ) {
+    return '/[encoded-redacted]';
+  }
+
+  const looksLikeSplitEncodedPayload = (() => {
+    if (!normalizedPayloadPath.includes('//')) return false;
+    const [left, right] = normalizedPayloadPath.split('//', 2);
+    if (!left || !right) return false;
+    if (left.length < 24 || right.length < 8) return false;
+    const leftLooksEncoded = /^[A-Za-z0-9_-]+=*$/.test(left);
+    const rightLooksEncoded = /^[A-Za-z0-9_-]+=*$/.test(right);
+    return leftLooksEncoded && rightLooksEncoded;
+  })();
+
+  if (looksLikeSplitEncodedPayload) {
+    if (candidate.toLowerCase().startsWith('tr/cl/')) {
+      return '/tr/cl/[redacted]';
+    }
+    return '/[encoded-redacted]';
+  }
+
+  if (
+    /^(cgi-bin|storage\/logs|phpmyadmin|wp-admin|wp-login\.php|\.env|vendor\/phpunit|actuator|server-status|hnap1|boaform)\b/i.test(normalizedPayloadPath) ||
+    normalizedPayloadPath.includes('..')
+  ) {
+    return '/[scanner-probe]';
+  }
+
+  return safeLogValue(noQuery, 180);
+}
+
+function getEventTimestamp(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  return typeof meta.at === 'string' ? meta.at : null;
+}
+
+function shouldTrackRuntimeRequest(req) {
+  const pathValueRaw = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  const pathValue = pathValueRaw.length > 1 ? pathValueRaw.replace(/\/+$/, '') : pathValueRaw;
+  if (
+    pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/stream-log', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/view-log', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/view-log-live', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/geo-debug', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/ts-client-log', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/interstitial-human', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/challenge', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/challenge-fragment', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/decrypt-challenge-data', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/turnstile-sitekey', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/api/v1/status', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_collect', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_interact', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_analytics.gif', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/_debug', { allowChildren: true }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/__debug', { allowChildren: true }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/admin', { allowChildren: true }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/__hp.gif', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/favicon.ico', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/robots.txt', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/sitemap.xml', { allowChildren: false })
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isLikelyScannerProbePath(pathValue) {
+  const raw = String(pathValue || '/').split('?')[0].split('#')[0] || '/';
+  const candidate = raw.startsWith('/') ? raw.slice(1) : raw;
+  const { payloadPath } = stripOptionalUrlPrefix(candidate);
+  const normalizedPayloadPath = String(payloadPath || '').replace(/^\/+/, '').toLowerCase();
+  if (!normalizedPayloadPath) return false;
+  if (normalizedPayloadPath.includes('..')) return true;
+  return /^(cgi-bin|storage\/logs|phpmyadmin|wp-admin|wp-login\.php|\.env|vendor\/phpunit|actuator|server-status|hnap1|boaform|xmlrpc\.php|\.git\/head)\b/i.test(normalizedPayloadPath);
+}
+
+function summarizeError(error, maxLen = 220) {
+  if (error == null) return null;
+  const value = String(error && error.stack ? error.stack : error);
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
 
 let cpuSnapshot = {
   timeNs: process.hrtime.bigint(),
@@ -160,6 +314,49 @@ const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() 
 
 // ------------ Enhanced Global Security Headers ---------------
 app.use((req, res, next) => {
+  const requestStartedAtMs = Date.now();
+  const trackRuntimeRequest = shouldTrackRuntimeRequest(req);
+  const trackedRequestId = trackRuntimeRequest ? nextTrackedRequestId++ : null;
+
+  if (trackRuntimeRequest) {
+    runtimeStats.totalRequests += 1;
+    activeTrackedRequests.set(trackedRequestId, requestStartedAtMs);
+    runtimeStats.inFlightRequests = getTrackedInFlightCount();
+    runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
+    runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
+  }
+
+  let requestAccounted = false;
+  const finalizeTrackedRequest = () => {
+    if (!trackRuntimeRequest || requestAccounted) return false;
+    requestAccounted = true;
+    activeTrackedRequests.delete(trackedRequestId);
+    runtimeStats.inFlightRequests = getTrackedInFlightCount();
+
+    const durationMs = Date.now() - requestStartedAtMs;
+    if (durationMs > runtimeStats.maxObservedRequestDurationMs) {
+      runtimeStats.maxObservedRequestDurationMs = durationMs;
+    }
+    return true;
+  };
+
+  const recordRequestCompletion = () => {
+    if (!finalizeTrackedRequest()) return;
+    runtimeStats.completedRequests += 1;
+    runtimeStats.lastRequestCompletedAt = new Date().toISOString();
+    runtimeStats.lastResponseStatus = res.statusCode;
+  };
+
+  const recordRequestAbort = () => {
+    if (!finalizeTrackedRequest()) return;
+    runtimeStats.abortedRequests += 1;
+  };
+
+  res.on("finish", recordRequestCompletion);
+  res.on("close", recordRequestAbort);
+  res.on("error", recordRequestAbort);
+  req.on("aborted", recordRequestAbort);
+
   req.setTimeout(REQUEST_TIMEOUT_MS);
   res.setTimeout(REQUEST_TIMEOUT_MS);
 
@@ -543,7 +740,8 @@ function validateRedirectRequest(req, res, next) {
       // [AGG:VALIDATION-FAILED] summary lines.
       const shouldLog = aggregatePerIpEvent("VALIDATION-FAILED", {
         ip,
-        reason: "invalid_catch_all_path"
+        reason: "invalid_catch_all_path",
+        suppressFirst: isLikelyScannerProbePath(req.path)
       });
 
       if (shouldLog) {
@@ -899,6 +1097,7 @@ const AGG_FLUSH_MS = parseInt(process.env.LOG_AGG_FLUSH_MS || "15000", 10);
 const logAggregation = new Map();
 
 function aggregatePerIpEvent(eventKey, details = {}) {
+  const suppressFirst = details && details.suppressFirst === true;
   const ip = safeLogValue(details.ip || "unknown", 80);
   const key = `${eventKey}:${ip}`;
   const now = Date.now();
@@ -910,7 +1109,7 @@ function aggregatePerIpEvent(eventKey, details = {}) {
       windowStart: now,
       lastDetails: details
     });
-    return true;
+    return !suppressFirst;
   }
 
   st.count += 1;
@@ -5978,11 +6177,14 @@ if (OPTIONAL_URL_PREFIX) {
   app.post(withOptionalUrlPrefix("/decrypt-challenge-data"), express.json({ limit: "1kb" }), handleDecryptChallengeData);
 }
 
-const handleHealth = (_req, res) => {
+const handleHealth = (req, res) => {
   const turnstileHealthy = _health.ok !== false;
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
+  const currentRequestIsTracked = shouldTrackRuntimeRequest(req) ? 1 : 0;
+  const inFlightRequests = getTrackedInFlightCount();
+  const inFlightExcludingCurrent = Math.max(0, inFlightRequests - currentRequestIsTracked);
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
@@ -5991,6 +6193,37 @@ const handleHealth = (_req, res) => {
     stats: {
       requestTimeouts: runtimeStats.requestTimeouts,
       shutdownSignals: runtimeStats.shutdownSignals,
+      processWarnings: runtimeStats.processWarnings,
+      uncaughtExceptions: runtimeStats.uncaughtExceptions,
+      unhandledRejections: runtimeStats.unhandledRejections,
+      serverClientErrors: runtimeStats.serverClientErrors,
+      serverErrors: runtimeStats.serverErrors,
+      bootId: runtimeStats.bootId,
+      startedAt: runtimeStats.startedAt,
+      totalRequests: runtimeStats.totalRequests,
+      inFlightRequests,
+      inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
+      completedRequests: runtimeStats.completedRequests,
+      abortedRequests: runtimeStats.abortedRequests,
+      staleTrackedRequestsPruned: runtimeStats.staleTrackedRequestsPruned,
+      lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
+      lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
+      lastRequestPath: runtimeStats.lastRequestPath,
+      lastResponseStatus: runtimeStats.lastResponseStatus,
+      maxObservedRequestDurationMs: runtimeStats.maxObservedRequestDurationMs,
+      maxObservedEventLoopLagMs: runtimeStats.maxObservedEventLoopLagMs,
+      lastEventLoopLagAt: runtimeStats.lastEventLoopLagAt,
+      turnstileChecks: runtimeStats.turnstileChecks,
+      turnstileCheckErrors: runtimeStats.turnstileCheckErrors,
+      turnstileCheckTimeouts: runtimeStats.turnstileCheckTimeouts,
+      lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
+      lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
+      lastTurnstileError: runtimeStats.lastTurnstileError,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     },
@@ -6005,8 +6238,12 @@ const handleHealth = (_req, res) => {
   });
 };
 
-const handleLiveness = (_req, res) => {
+const handleLiveness = (req, res) => {
   const usage = getRuntimeUsageSnapshot();
+  const currentRequestIsTracked = shouldTrackRuntimeRequest(req) ? 1 : 0;
+  const inFlightRequests = getTrackedInFlightCount();
+  const inFlightExcludingCurrent = Math.max(0, inFlightRequests - currentRequestIsTracked);
+
   res.status(200).json({
     ok: true,
     uptimeSec: Math.floor(process.uptime()),
@@ -6014,6 +6251,37 @@ const handleLiveness = (_req, res) => {
     stats: {
       requestTimeouts: runtimeStats.requestTimeouts,
       shutdownSignals: runtimeStats.shutdownSignals,
+      processWarnings: runtimeStats.processWarnings,
+      uncaughtExceptions: runtimeStats.uncaughtExceptions,
+      unhandledRejections: runtimeStats.unhandledRejections,
+      serverClientErrors: runtimeStats.serverClientErrors,
+      serverErrors: runtimeStats.serverErrors,
+      bootId: runtimeStats.bootId,
+      startedAt: runtimeStats.startedAt,
+      totalRequests: runtimeStats.totalRequests,
+      inFlightRequests,
+      inFlightRequestsExcludingCurrent: inFlightExcludingCurrent,
+      completedRequests: runtimeStats.completedRequests,
+      abortedRequests: runtimeStats.abortedRequests,
+      staleTrackedRequestsPruned: runtimeStats.staleTrackedRequestsPruned,
+      lastRequestStartedAt: runtimeStats.lastRequestStartedAt,
+      lastRequestCompletedAt: runtimeStats.lastRequestCompletedAt,
+      lastRequestPath: runtimeStats.lastRequestPath,
+      lastResponseStatus: runtimeStats.lastResponseStatus,
+      maxObservedRequestDurationMs: runtimeStats.maxObservedRequestDurationMs,
+      maxObservedEventLoopLagMs: runtimeStats.maxObservedEventLoopLagMs,
+      lastEventLoopLagAt: runtimeStats.lastEventLoopLagAt,
+      turnstileChecks: runtimeStats.turnstileChecks,
+      turnstileCheckErrors: runtimeStats.turnstileCheckErrors,
+      turnstileCheckTimeouts: runtimeStats.turnstileCheckTimeouts,
+      lastTurnstileCheckAt: runtimeStats.lastTurnstileCheckAt,
+      lastTurnstileLatencyMs: runtimeStats.lastTurnstileLatencyMs,
+      lastTurnstileError: runtimeStats.lastTurnstileError,
+      lastUnhandledRejectionAt: getEventTimestamp(runtimeStats.lastUnhandledRejection),
+      lastUncaughtExceptionAt: getEventTimestamp(runtimeStats.lastUncaughtException),
+      lastServerClientErrorAt: getEventTimestamp(runtimeStats.lastServerClientError),
+      lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
+      lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
       memory: usage.memory
     }
@@ -6432,7 +6700,12 @@ app.get("/robots.txt", (req, res) => {
   return res.send("User-agent: *\nDisallow: /\n");
 });
 
-app.get("/turnstile-sitekey", (_req, res) => res.json({ sitekey: TURNSTILE_SITEKEY }));
+app.get("/turnstile-sitekey", (req, res) => {
+  if (isAdmin(req)) {
+    return res.json({ sitekey: TURNSTILE_SITEKEY });
+  }
+  return res.status(404).type("text/plain").send("Not Found");
+});
 
 app.get("/__debug/key", requireAdmin, (req, res) => {
   const items = AES_KEYS.map((buf, idx) => {
@@ -7268,6 +7541,11 @@ function startEventLoopLagMonitor() {
     const lag = now - expected;
     expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
 
+    if (lag > runtimeStats.maxObservedEventLoopLagMs) {
+      runtimeStats.maxObservedEventLoopLagMs = lag;
+      runtimeStats.lastEventLoopLagAt = new Date(now).toISOString();
+    }
+
     if (lag < EVENT_LOOP_LAG_WARN_MS) return;
 
     const mem = process.memoryUsage();
@@ -7363,10 +7641,16 @@ async function checkTurnstileReachable() {
   _health.inflight = true;
 
   const now = Date.now();
+  const startedAtMs = Date.now();
+  runtimeStats.turnstileChecks += 1;
+  runtimeStats.lastTurnstileCheckAt = new Date(startedAtMs).toISOString();
+
   try {
     const url = `${TURNSTILE_ORIGIN}/turnstile/v0/api.js`;
     const r = await fetchWithTimeout(url, { method: "HEAD" }, process.env.TURNSTILE_HEALTH_TIMEOUT_MS || 5000);
     const ok = r.ok;
+    runtimeStats.lastTurnstileLatencyMs = Date.now() - startedAtMs;
+    runtimeStats.lastTurnstileError = null;
 
     if (ok) { _health.okStreak++; _health.failStreak = 0; }
     else    { _health.failStreak++; _health.okStreak  = 0; }
@@ -7380,6 +7664,18 @@ async function checkTurnstileReachable() {
       _health.lastHeartbeat = now;
     }
   } catch (e) {
+    runtimeStats.turnstileCheckErrors += 1;
+    const errSummary = summarizeError(e);
+    runtimeStats.lastTurnstileLatencyMs = Date.now() - startedAtMs;
+    runtimeStats.lastTurnstileError = {
+      at: new Date().toISOString(),
+      message: errSummary
+    };
+
+    if (errSummary && /timeout|aborted|aborterror/i.test(errSummary)) {
+      runtimeStats.turnstileCheckTimeouts += 1;
+    }
+
     _health.failStreak++; _health.okStreak = 0;
     if (_health.ok !== false) {
       addLog(`[HEALTH] turnstile HEAD error ${String(e)} (change)`);
@@ -7443,6 +7739,7 @@ const server = app.listen(PORT, async () => {
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
+  addLog(`[RUNTIME] bootId=${runtimeStats.bootId} startedAt=${runtimeStats.startedAt}`);
   addLog(startupSummary());
 
   // BYPASS status (CORRECT LOCATION)
@@ -7457,6 +7754,75 @@ const server = app.listen(PORT, async () => {
 
 server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
 server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+
+server.on("clientError", (error, socket) => {
+  runtimeStats.serverClientErrors += 1;
+  runtimeStats.lastServerClientError = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[SERVER] clientError ${safeLogValue(summarizeError(error), 180)}`);
+
+  if (socket && socket.writable) {
+    try {
+      socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    } catch (_) {}
+  }
+});
+
+server.on("error", (error) => {
+  runtimeStats.serverErrors += 1;
+  runtimeStats.lastServerError = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[SERVER] error ${safeLogValue(summarizeError(error), 180)}`);
+  scheduleFatalExit("server.error", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  runtimeStats.unhandledRejections += 1;
+  runtimeStats.lastUnhandledRejection = {
+    at: new Date().toISOString(),
+    reason: summarizeError(reason)
+  };
+  addLog(`[PROCESS] unhandledRejection ${safeLogValue(summarizeError(reason), 180)}`);
+  scheduleFatalExit("unhandledRejection", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  runtimeStats.uncaughtExceptions += 1;
+  runtimeStats.lastUncaughtException = {
+    at: new Date().toISOString(),
+    message: summarizeError(error)
+  };
+  addLog(`[PROCESS] uncaughtException ${safeLogValue(summarizeError(error), 180)}`);
+  scheduleFatalExit("uncaughtException", error);
+});
+
+process.on("warning", (warning) => {
+  runtimeStats.processWarnings += 1;
+  runtimeStats.lastProcessWarning = {
+    at: new Date().toISOString(),
+    name: safeLogValue(warning && warning.name ? warning.name : "Warning", 80),
+    message: summarizeError(warning && warning.message ? warning.message : warning)
+  };
+  addLog(`[PROCESS] warning name=${safeLogValue(warning && warning.name ? warning.name : "Warning", 80)} msg=${safeLogValue(summarizeError(warning && warning.message ? warning.message : warning), 180)}`);
+});
+
+let fatalExitScheduled = false;
+function scheduleFatalExit(origin, details) {
+  if (fatalExitScheduled) return;
+  fatalExitScheduled = true;
+
+  const summary = safeLogValue(summarizeError(details), 180);
+  addLog(`[FATAL] ${safeLogValue(origin, 64)} scheduling process exit summary=${summary}`);
+
+  setImmediate(() => {
+    process.exitCode = 1;
+    process.exit(1);
+  });
+}
 
 let isShuttingDown = false;
 async function gracefulShutdown(signal) {
