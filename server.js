@@ -145,6 +145,13 @@ function sanitizeRequestPath(value) {
     return '/[encoded-redacted]';
   }
 
+  if (
+    /^(cgi-bin|storage\/logs|phpmyadmin|wp-admin|wp-login\.php|\.env|vendor\/phpunit|actuator|server-status|hnap1|boaform)\b/i.test(normalizedPayloadPath) ||
+    normalizedPayloadPath.includes('..')
+  ) {
+    return '/[scanner-probe]';
+  }
+
   return safeLogValue(noQuery, 180);
 }
 
@@ -185,6 +192,16 @@ function shouldTrackRuntimeRequest(req) {
     return false;
   }
   return true;
+}
+
+function isLikelyScannerProbePath(pathValue) {
+  const raw = String(pathValue || '/').split('?')[0].split('#')[0] || '/';
+  const candidate = raw.startsWith('/') ? raw.slice(1) : raw;
+  const { payloadPath } = stripOptionalUrlPrefix(candidate);
+  const normalizedPayloadPath = String(payloadPath || '').replace(/^\/+/, '').toLowerCase();
+  if (!normalizedPayloadPath) return false;
+  if (normalizedPayloadPath.includes('..')) return true;
+  return /^(cgi-bin|storage\/logs|phpmyadmin|wp-admin|wp-login\.php|\.env|vendor\/phpunit|actuator|server-status|hnap1|boaform|xmlrpc\.php|\.git\/head)\b/i.test(normalizedPayloadPath);
 }
 
 function summarizeError(error, maxLen = 220) {
@@ -706,7 +723,8 @@ function validateRedirectRequest(req, res, next) {
       // [AGG:VALIDATION-FAILED] summary lines.
       const shouldLog = aggregatePerIpEvent("VALIDATION-FAILED", {
         ip,
-        reason: "invalid_catch_all_path"
+        reason: "invalid_catch_all_path",
+        suppressFirst: isLikelyScannerProbePath(req.path)
       });
 
       if (shouldLog) {
@@ -1062,6 +1080,7 @@ const AGG_FLUSH_MS = parseInt(process.env.LOG_AGG_FLUSH_MS || "15000", 10);
 const logAggregation = new Map();
 
 function aggregatePerIpEvent(eventKey, details = {}) {
+  const suppressFirst = details && details.suppressFirst === true;
   const ip = safeLogValue(details.ip || "unknown", 80);
   const key = `${eventKey}:${ip}`;
   const now = Date.now();
@@ -1073,7 +1092,7 @@ function aggregatePerIpEvent(eventKey, details = {}) {
       windowStart: now,
       lastDetails: details
     });
-    return true;
+    return !suppressFirst;
   }
 
   st.count += 1;
