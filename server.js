@@ -112,6 +112,18 @@ function getEventTimestamp(meta) {
   return typeof meta.at === 'string' ? meta.at : null;
 }
 
+function shouldTrackRuntimeRequest(req) {
+  const pathValue = String(req && (req.path || req.originalUrl || req.url) || '/').split('?')[0].split('#')[0];
+  if (
+    pathMatchesWithOptionalPrefix(pathValue, '/health', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/readyz', { allowChildren: false }) ||
+    pathMatchesWithOptionalPrefix(pathValue, '/healthz', { allowChildren: false })
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function summarizeError(error, maxLen = 220) {
   if (error == null) return null;
   const value = String(error && error.stack ? error.stack : error);
@@ -206,15 +218,18 @@ const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() 
 // ------------ Enhanced Global Security Headers ---------------
 app.use((req, res, next) => {
   const requestStartedAtMs = Date.now();
-  runtimeStats.totalRequests += 1;
-  runtimeStats.inFlightRequests += 1;
-  runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
-  runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
+  const trackRuntimeRequest = shouldTrackRuntimeRequest(req);
 
+  if (trackRuntimeRequest) {
+    runtimeStats.totalRequests += 1;
+    runtimeStats.inFlightRequests += 1;
+    runtimeStats.lastRequestStartedAt = new Date(requestStartedAtMs).toISOString();
+    runtimeStats.lastRequestPath = sanitizeRequestPath(req.originalUrl || req.url || req.path || "-");
+  }
 
   let requestAccounted = false;
   const recordRequestCompletion = () => {
-    if (requestAccounted) return;
+    if (!trackRuntimeRequest || requestAccounted) return;
     requestAccounted = true;
     runtimeStats.inFlightRequests = Math.max(0, runtimeStats.inFlightRequests - 1);
     runtimeStats.completedRequests += 1;
@@ -6053,7 +6068,7 @@ const handleHealth = (_req, res) => {
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
-  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - 1);
+  const inFlightExcludingCurrent = runtimeStats.inFlightRequests;
 
   res.status(statusCode).json({
     ok: turnstileHealthy,
@@ -6107,7 +6122,7 @@ const handleHealth = (_req, res) => {
 
 const handleLiveness = (_req, res) => {
   const usage = getRuntimeUsageSnapshot();
-  const inFlightExcludingCurrent = Math.max(0, runtimeStats.inFlightRequests - 1);
+  const inFlightExcludingCurrent = runtimeStats.inFlightRequests;
 
   res.status(200).json({
     ok: true,
@@ -7635,6 +7650,7 @@ server.on("error", (error) => {
     message: summarizeError(error)
   };
   addLog(`[SERVER] error ${safeLogValue(summarizeError(error), 180)}`);
+  scheduleFatalExit("server.error", error);
 });
 
 process.on("unhandledRejection", (reason) => {
