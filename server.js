@@ -637,19 +637,37 @@ function validateBase64Url(input) {
     isLikelyEmail
   );
 
-  if (!delimUsed) return false;
-  if (!base64UrlRegex.test(mainPart)) return false;
-  if (!emailPart || emailPart.length < 4) return false;
+  if (delimUsed && base64UrlRegex.test(mainPart) && emailPart && emailPart.length >= 4) {
+    // Accept legacy rhs formats that splitCipherAndEmail already recognizes:
+    // - base64/base64url encoded email
+    // - raw or URL-encoded email (e.g. alice%40example.com)
+    if (base64AnyRegex.test(emailPart)) return true;
 
-  // Accept legacy rhs formats that splitCipherAndEmail already recognizes:
-  // - base64/base64url encoded email
-  // - raw or URL-encoded email (e.g. alice%40example.com)
-  if (base64AnyRegex.test(emailPart)) return true;
+    const decodedEmail = safeDecode(String(emailPart)).trim();
+    if (decodedEmail && isLikelyEmail(decodedEmail)) return true;
 
-  const decodedEmail = safeDecode(String(emailPart)).trim();
-  if (decodedEmail && isLikelyEmail(decodedEmail)) return true;
+    if (isLikelyEmail(String(emailPart).trim())) return true;
+  }
 
-  if (isLikelyEmail(String(emailPart).trim())) return true;
+  // Flexible compatibility path formats (validation-only normalization):
+  // 1) /{payload}/{ignored}/{email}
+  // 2) /{payload}/{email}/{ignored}
+  // 3) /{payload}/{ignored}
+  // Normalize to the existing accepted payload forms, then validate again.
+  const flexibleParse = parseFlexiblePathRedirectInput(clean, {
+    decodeBase64UrlLoose: decodeB64urlLoose,
+    decodeFallback: safeDecode,
+    isValidEmail: isLikelyEmail
+  });
+
+  if (
+    flexibleParse.matchedNewFormat &&
+    !flexibleParse.ambiguityDetected &&
+    flexibleParse.normalizedBaseString &&
+    flexibleParse.normalizedBaseString !== clean
+  ) {
+    return validateBase64Url(flexibleParse.normalizedBaseString);
+  }
 
   return false;
 }
@@ -904,6 +922,93 @@ function splitCipherAndEmail(baseString, decodeFn, isEmailFn) {
   }
 
   return { mainPart, emailPart, delimUsed };
+}
+
+
+function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
+  const {
+    decodeBase64UrlLoose = () => '',
+    decodeFallback = () => '',
+    isValidEmail = () => false
+  } = helpers;
+
+  const input = String(pathValue || '').replace(/^\/+|\/+$/g, '');
+  const segments = input ? input.split('/').filter(Boolean) : [];
+
+  const result = {
+    matchedNewFormat: false,
+    payload: null,
+    email: null,
+    ignoredSegment: null,
+    parseMode: 'legacy',
+    ambiguityDetected: false,
+    emailSegment: null,
+    normalizedBaseString: null
+  };
+
+  if (segments.length !== 2 && segments.length !== 3) return result;
+
+  const payload = String(segments[0] || '');
+  if (!payload) return result;
+
+  if (segments.length === 2) {
+    result.matchedNewFormat = true;
+    result.payload = payload;
+    result.ignoredSegment = segments[1] || null;
+    result.parseMode = 'payload_ignored';
+    result.normalizedBaseString = payload;
+    return result;
+  }
+
+  const candidate2 = detectEncodedEmailSegment(segments[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+  const candidate3 = detectEncodedEmailSegment(segments[2], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+
+  if (candidate2.isEmail && candidate3.isEmail) {
+    result.matchedNewFormat = true;
+    result.payload = payload;
+    result.parseMode = 'ambiguous_email_segments';
+    result.ambiguityDetected = true;
+    return result;
+  }
+
+  if (!candidate2.isEmail && !candidate3.isEmail) {
+    result.matchedNewFormat = true;
+    result.payload = payload;
+    result.ignoredSegment = segments[1] || null;
+    result.parseMode = 'payload_ignored_no_email';
+    result.normalizedBaseString = payload;
+    return result;
+  }
+
+  const emailCandidate = candidate2.isEmail ? candidate2 : candidate3;
+  const ignoredSegment = candidate2.isEmail ? segments[2] : segments[1];
+  const emailSegment = candidate2.isEmail ? 'segment2' : 'segment3';
+
+  result.matchedNewFormat = true;
+  result.payload = payload;
+  result.email = emailCandidate.raw;
+  result.ignoredSegment = ignoredSegment || null;
+  result.parseMode = emailSegment === 'segment2' ? 'payload_email_ignored' : 'payload_ignored_email';
+  result.emailSegment = emailSegment;
+  result.normalizedBaseString = `${payload}/${emailCandidate.raw}`;
+  return result;
+}
+
+function detectEncodedEmailSegment(segment, decodeBase64UrlLoose, decodeFallback, isValidEmail) {
+  const raw = String(segment || '').trim();
+  if (!raw) return { isEmail: false, raw: '', decoded: '' };
+
+  const b64Decoded = String(decodeBase64UrlLoose(raw) || '').trim();
+  if (b64Decoded && isValidEmail(b64Decoded)) {
+    return { isEmail: true, raw, decoded: b64Decoded, source: 'b64url' };
+  }
+
+  const fallbackDecoded = String(decodeFallback(raw) || '').trim();
+  if (fallbackDecoded && fallbackDecoded !== raw && isValidEmail(fallbackDecoded)) {
+    return { isEmail: true, raw, decoded: fallbackDecoded, source: 'fallback' };
+  }
+
+  return { isEmail: false, raw, decoded: '' };
 }
 
 function normHost(h) {
@@ -3367,78 +3472,118 @@ async function verifyTurnstileAndRateLimit(req, baseString) {
 function decryptAndParseUrl(req, baseString) {
   const ip = getClientIp(req);
   const linkHash = req.query.lh ? String(req.query.lh) : hashFirstSeg(baseString);
-  
-  const { mainPart, emailPart: emailPart0, delimUsed } =
-    splitCipherAndEmail(baseString, decodeB64urlLoose, isLikelyEmail);
 
-  if (delimUsed) {
-    addLog(`[PARSE] delimiter used "${delimUsed}" mainLen=${mainPart.length} emailRawLen=${(emailPart0 || '').length}`);
+  // Precedence:
+  // 1) Existing legacy parsing/decryption first.
+  // 2) Existing explicit query/path handling routes.
+  // 3) Flexible 2/3-segment path normalization as compatibility fallback.
+  // 4) Existing error/fallback behavior.
+  const flexibleParse = parseFlexiblePathRedirectInput(baseString, {
+    decodeBase64UrlLoose: decodeB64urlLoose,
+    decodeFallback: safeDecode,
+    isValidEmail: isLikelyEmail
+  });
+  const parserLogCtx = {
+    matchedNewFormat: !!flexibleParse.matchedNewFormat,
+    parseMode: flexibleParse.parseMode,
+    emailSegment: flexibleParse.emailSegment || "none",
+    emailPresent: !!flexibleParse.email,
+    ambiguityDetected: !!flexibleParse.ambiguityDetected
+  };
+  addLog(`[PATH-NORMALIZE] ${safeLogJson(parserLogCtx, LOG_ENTRY_MAX_LENGTH)}`);
+
+  const candidates = [{ mode: "legacy", value: baseString }];
+  if (flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString) {
+    candidates.push({ mode: "flexible", value: flexibleParse.normalizedBaseString });
   }
 
-  let result = null;
-  try {
-    result = tryDecryptAny(mainPart);
-  } catch (e) {
-    addLog(`[DECRYPT] exception ip=${safeLogValue(ip)} seg="${safeLogValue(String(mainPart), EMAIL_DISPLAY_MAX_LENGTH)}" err=${safeLogValue(e.message)}`);
-    addSpacer();
-    return { error: "Failed to load" };
-  }
-  
-  let decryptedPayload = result && result.url;
-  let emailPart = emailPart0 || null;
+  for (const candidate of candidates) {
+    const candidateBase = candidate.value;
+    const { mainPart, emailPart: emailPart0, delimUsed } =
+      splitCipherAndEmail(candidateBase, decodeB64urlLoose, isLikelyEmail);
 
-  if (!decryptedPayload) {
-    const bf = bruteSplitDecryptFull(baseString);
-    if (bf && bf.url) {
-      decryptedPayload = bf.url;
-      if (!emailPart) emailPart = bf.emailRaw || null;
-      addLog(`[DECRYPT] fallback split used k=${bf.kTried} emailRawLen=${(bf.emailRaw || '').length}`);
+    if (delimUsed) {
+      addLog(`[PARSE] delimiter used "${delimUsed}" mode=${candidate.mode} mainLen=${mainPart.length} emailRawLen=${(emailPart0 || '').length}`);
     }
-  }
 
-  if (!decryptedPayload) {
-    const why = explainDecryptFailure({
-      tried: result?.tried || [],
-      lastErr: result?.lastErr || null,
-      segLen: mainPart.length
-    });
-    addLog(`[DECRYPT] failed variants ip=${safeLogValue(ip)} seg="${safeLogValue(String(mainPart), EMAIL_DISPLAY_MAX_LENGTH)}" mainLen=${mainPart.length} why=${safeLogValue(why)}`);
-    addSpacer();
-    return { error: "Failed to load" };
-  }
+    let result = null;
+    try {
+      result = tryDecryptAny(mainPart);
+    } catch (e) {
+      addLog(`[DECRYPT] exception ip=${safeLogValue(ip)} mode=${candidate.mode} seg="${safeLogValue(String(mainPart), EMAIL_DISPLAY_MAX_LENGTH)}" err=${safeLogValue(e.message)}`);
+      addSpacer();
+      return { error: "Failed to load" };
+    }
 
-  let parsedUrl = decryptedPayload;
-  let pinnedHost = null;
-  let hmacChecked = false;
-  let hmacValid = false;
+    let decryptedPayload = result && result.url;
+    let emailPart = emailPart0 || null;
 
-  try {
-    const parsed = JSON.parse(decryptedPayload);
-    if (parsed && typeof parsed === "object") {
-      if (typeof parsed.url === "string") parsedUrl = parsed.url;
-      if (typeof parsed.dest_host === "string") pinnedHost = parsed.dest_host;
-      if (parsed && typeof parsed.hmac === "string" && pinnedHost && parsedUrl) {
-        const res = verifyLinkHmac(parsedUrl, pinnedHost, parsed.hmac);
-        hmacChecked = true;
-        hmacValid = !!res.ok;
+    if (!decryptedPayload) {
+      const bf = bruteSplitDecryptFull(candidateBase);
+      if (bf && bf.url) {
+        decryptedPayload = bf.url;
+        if (!emailPart) emailPart = bf.emailRaw || null;
+        addLog(`[DECRYPT] fallback split used mode=${candidate.mode} k=${bf.kTried} emailRawLen=${(bf.emailRaw || '').length}`);
       }
     }
-  } catch {}
 
-  if (hmacChecked && !hmacValid) {
-    const ua = req.get("user-agent") || "";
-    const logCtx = {
-      ip: safeLogValue(ip),
-      uaHash: hashUaForToken(ua),
-      linkHash: safeLogValue(linkHash, 64),
-      destHost: safeLogValue(pinnedHost || "-", 120)
-    };
-    addLog(`[DECRYPT] hmac mismatch ${safeLogJson(logCtx, LOG_ENTRY_MAX_LENGTH)}`);
-    addSpacer();
-    return { error: "Failed to load" };
+    if (!decryptedPayload) {
+      if (candidate.mode === "legacy" && candidates.length > 1) {
+        addLog(`[PATH-NORMALIZE] legacy parse failed, trying flexible mode=${safeLogValue(flexibleParse.parseMode, 64)}`);
+        continue;
+      }
+      const why = explainDecryptFailure({
+        tried: result?.tried || [],
+        lastErr: result?.lastErr || null,
+        segLen: mainPart.length
+      });
+      addLog(`[DECRYPT] failed variants ip=${safeLogValue(ip)} mode=${candidate.mode} seg="${safeLogValue(String(mainPart), EMAIL_DISPLAY_MAX_LENGTH)}" mainLen=${mainPart.length} why=${safeLogValue(why)}`);
+      addSpacer();
+      return { error: "Failed to load" };
+    }
+
+    let parsedUrl = decryptedPayload;
+    let pinnedHost = null;
+    let hmacChecked = false;
+    let hmacValid = false;
+
+    try {
+      const parsed = JSON.parse(decryptedPayload);
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.url === "string") parsedUrl = parsed.url;
+        if (typeof parsed.dest_host === "string") pinnedHost = parsed.dest_host;
+        if (parsed && typeof parsed.hmac === "string" && pinnedHost && parsedUrl) {
+          const res = verifyLinkHmac(parsedUrl, pinnedHost, parsed.hmac);
+          hmacChecked = true;
+          hmacValid = !!res.ok;
+        }
+      }
+    } catch {}
+
+    if (hmacChecked && !hmacValid) {
+      const ua = req.get("user-agent") || "";
+      const logCtx = {
+        ip: safeLogValue(ip),
+        uaHash: hashUaForToken(ua),
+        linkHash: safeLogValue(linkHash, 64),
+        destHost: safeLogValue(pinnedHost || "-", 120)
+      };
+      addLog(`[DECRYPT] hmac mismatch ${safeLogJson(logCtx, LOG_ENTRY_MAX_LENGTH)}`);
+      addSpacer();
+      return { error: "Failed to load" };
+    }
+
+    if (candidate.mode === "flexible") {
+      addLog(`[PATH-NORMALIZE] flexible parser applied mode=${safeLogValue(flexibleParse.parseMode, 64)} emailSegment=${safeLogValue(flexibleParse.emailSegment || "none", 16)}`);
+    }
+    return { finalUrl: parsedUrl, emailPart, pinnedHost, linkHash };
   }
 
-  return { finalUrl: parsedUrl, emailPart, pinnedHost, linkHash };
+  if (flexibleParse.ambiguityDetected) {
+    addLog(`[PATH-NORMALIZE] ambiguous email segments; falling back to legacy invalid handling`);
+  }
+  addSpacer();
+  return { error: "Failed to load" };
 }
 
 function processEmailAndFinalizeUrl(finalUrl, emailPart) {
