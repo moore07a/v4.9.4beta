@@ -637,19 +637,37 @@ function validateBase64Url(input) {
     isLikelyEmail
   );
 
-  if (!delimUsed) return false;
-  if (!base64UrlRegex.test(mainPart)) return false;
-  if (!emailPart || emailPart.length < 4) return false;
+  if (delimUsed && base64UrlRegex.test(mainPart) && emailPart && emailPart.length >= 4) {
+    // Accept legacy rhs formats that splitCipherAndEmail already recognizes:
+    // - base64/base64url encoded email
+    // - raw or URL-encoded email (e.g. alice%40example.com)
+    if (base64AnyRegex.test(emailPart)) return true;
 
-  // Accept legacy rhs formats that splitCipherAndEmail already recognizes:
-  // - base64/base64url encoded email
-  // - raw or URL-encoded email (e.g. alice%40example.com)
-  if (base64AnyRegex.test(emailPart)) return true;
+    const decodedEmail = safeDecode(String(emailPart)).trim();
+    if (decodedEmail && isLikelyEmail(decodedEmail)) return true;
 
-  const decodedEmail = safeDecode(String(emailPart)).trim();
-  if (decodedEmail && isLikelyEmail(decodedEmail)) return true;
+    if (isLikelyEmail(String(emailPart).trim())) return true;
+  }
 
-  if (isLikelyEmail(String(emailPart).trim())) return true;
+  // Flexible compatibility path formats (validation-only normalization):
+  // 1) /{payload}/{ignored}/{email}
+  // 2) /{payload}/{email}/{ignored}
+  // 3) /{payload}/{ignored}
+  // Normalize to the existing accepted payload forms, then validate again.
+  const flexibleParse = parseFlexiblePathRedirectInput(clean, {
+    decodeBase64UrlLoose: decodeB64urlLoose,
+    decodeFallback: safeDecode,
+    isValidEmail: isLikelyEmail
+  });
+
+  if (
+    flexibleParse.matchedNewFormat &&
+    !flexibleParse.ambiguityDetected &&
+    flexibleParse.normalizedBaseString &&
+    flexibleParse.normalizedBaseString !== clean
+  ) {
+    return validateBase64Url(flexibleParse.normalizedBaseString);
+  }
 
   return false;
 }

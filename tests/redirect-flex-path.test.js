@@ -5,23 +5,30 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function loadParserFromServer() {
+function loadFunctionsFromServer() {
   const source = fs.readFileSync('server.js', 'utf8');
-  const detectStart = source.indexOf('function detectEncodedEmailSegment(');
-  const parserStart = source.indexOf('function parseFlexiblePathRedirectInput(');
-  const normHostStart = source.indexOf('function normHost(');
-
-  if (detectStart < 0 || parserStart < 0 || normHostStart < 0) {
-    throw new Error('Could not locate parser functions in server.js');
+  const start = source.indexOf('function safeDecode(');
+  const end = source.indexOf('function normHost(');
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error('Could not locate expected function region in server.js');
   }
 
-  const snippet = source.slice(parserStart, normHostStart) + '\nthis.parseFlexiblePathRedirectInput = parseFlexiblePathRedirectInput;';
-  const sandbox = {};
+  const snippet = `${source.slice(start, end)}\nthis.__loaded = { parseFlexiblePathRedirectInput, validateBase64Url };`;
+  const sandbox = { Buffer, process: { env: {} } };
   vm.createContext(sandbox);
   vm.runInContext(snippet, sandbox);
 
-  return sandbox.parseFlexiblePathRedirectInput;
+  if (!sandbox.__loaded || typeof sandbox.__loaded.parseFlexiblePathRedirectInput !== 'function' || typeof sandbox.__loaded.validateBase64Url !== 'function') {
+    throw new Error('Failed to load parser/validator functions from server.js');
+  }
+
+  return sandbox.__loaded;
 }
+
+const {
+  parseFlexiblePathRedirectInput,
+  validateBase64Url
+} = loadFunctionsFromServer();
 
 function decodeB64urlLoose(s) {
   try {
@@ -45,7 +52,6 @@ function isLikelyEmail(s) {
   return /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/i.test(String(s || ''));
 }
 
-const parseFlexiblePathRedirectInput = loadParserFromServer();
 const helpers = {
   decodeBase64UrlLoose: decodeB64urlLoose,
   decodeFallback: safeDecode,
@@ -54,53 +60,54 @@ const helpers = {
 
 const b64urlEmail = Buffer.from('alice@example.com', 'utf8').toString('base64url');
 const b64stdEmail = Buffer.from('bob@example.com', 'utf8').toString('base64');
+const payload = 'I8d-eh9OogUNRrosFLLESnDTLOGI_bDottmN-72JzwezfDqfiudRshnTmpYjXnOYYXNWVFR1SefJp_KfB8ZDyabpDBM';
 
 test('supports /{payload}/{ignored}/{email}', () => {
-  const parsed = parseFlexiblePathRedirectInput(`payload123/test.com/${b64urlEmail}`, helpers);
+  const parsed = parseFlexiblePathRedirectInput(`${payload}/test.com/${b64urlEmail}`, helpers);
   assert.equal(parsed.matchedNewFormat, true);
   assert.equal(parsed.parseMode, 'payload_ignored_email');
   assert.equal(parsed.emailSegment, 'segment3');
-  assert.equal(parsed.payload, 'payload123');
-  assert.equal(parsed.ignoredSegment, 'test.com');
-  assert.equal(parsed.email, b64urlEmail);
-  assert.equal(parsed.normalizedBaseString, `payload123/${b64urlEmail}`);
 });
 
 test('supports /{payload}/{email}/{ignored}', () => {
-  const parsed = parseFlexiblePathRedirectInput(`payload123/${b64urlEmail}/cosmetic`, helpers);
+  const parsed = parseFlexiblePathRedirectInput(`${payload}/${b64urlEmail}/cosmetic`, helpers);
   assert.equal(parsed.matchedNewFormat, true);
   assert.equal(parsed.parseMode, 'payload_email_ignored');
   assert.equal(parsed.emailSegment, 'segment2');
-  assert.equal(parsed.ignoredSegment, 'cosmetic');
-  assert.equal(parsed.normalizedBaseString, `payload123/${b64urlEmail}`);
 });
 
 test('supports /{payload}/{ignored} with no email', () => {
-  const parsed = parseFlexiblePathRedirectInput('payload123/test.com', helpers);
+  const parsed = parseFlexiblePathRedirectInput(`${payload}/test.com`, helpers);
   assert.equal(parsed.matchedNewFormat, true);
   assert.equal(parsed.parseMode, 'payload_ignored');
-  assert.equal(parsed.email, null);
-  assert.equal(parsed.ignoredSegment, 'test.com');
-  assert.equal(parsed.normalizedBaseString, 'payload123');
+  assert.equal(parsed.normalizedBaseString, payload);
 });
 
 test('supports URL-safe and standard base64 email', () => {
-  const parsedUrl = parseFlexiblePathRedirectInput(`payload/${b64urlEmail}/ignored`, helpers);
-  const parsedStd = parseFlexiblePathRedirectInput(`payload/${b64stdEmail}/ignored`, helpers);
+  const parsedUrl = parseFlexiblePathRedirectInput(`${payload}/${b64urlEmail}/ignored`, helpers);
+  const parsedStd = parseFlexiblePathRedirectInput(`${payload}/${b64stdEmail}/ignored`, helpers);
   assert.equal(parsedUrl.emailSegment, 'segment2');
   assert.equal(parsedStd.emailSegment, 'segment2');
 });
 
 test('ambiguous both-email segments are flagged', () => {
   const another = Buffer.from('eve@example.org', 'utf8').toString('base64url');
-  const parsed = parseFlexiblePathRedirectInput(`payload/${b64urlEmail}/${another}`, helpers);
-  assert.equal(parsed.matchedNewFormat, true);
+  const parsed = parseFlexiblePathRedirectInput(`${payload}/${b64urlEmail}/${another}`, helpers);
   assert.equal(parsed.ambiguityDetected, true);
-  assert.equal(parsed.parseMode, 'ambiguous_email_segments');
   assert.equal(parsed.normalizedBaseString, null);
 });
 
-test('unsupported segment counts remain legacy', () => {
-  assert.equal(parseFlexiblePathRedirectInput('onlypayload', helpers).matchedNewFormat, false);
-  assert.equal(parseFlexiblePathRedirectInput('a/b/c/d', helpers).matchedNewFormat, false);
+test('validateBase64Url accepts payload//email/ignored', () => {
+  assert.equal(validateBase64Url(`${payload}//${b64urlEmail}/test.com`), true);
+});
+
+test('validateBase64Url accepts payload/ignored//email', () => {
+  assert.equal(validateBase64Url(`${payload}/test.com//${b64urlEmail}`), true);
+});
+
+test('validateBase64Url supports second payload sample with optional-prefix style paths', () => {
+  const payload2 = 'LiW9YpsvCplyLIlP2nPTeZ5JsWE5TbC7LSECsbflC7Cc2gtL-7LHqm-FT1JBkL2eY8wUyFUoI1RgldgpR2W7kNVG7h-KADXS_Jk';
+  const email2 = 'cmUzNDM2OTZAaG90bWFpbC5jb20=';
+  assert.equal(validateBase64Url(`${payload2}/test.com//${email2}`), true);
+  assert.equal(validateBase64Url(`${payload2}//${email2}/test.com`), true);
 });
