@@ -2621,6 +2621,8 @@ const BEHAVIORAL_CONFIG = {
   historyTtlMs: 10 * 60 * 1000,
   maxHistoryPerIp: 50,
   maxIpsBeforeCleanup: 10000,
+  maxIpsHardCap: 12000,
+  maxIpsPruneBatch: 1000,
   cleanupIntervalMs: 5 * 60 * 1000,
   rapidFireWindowMs: 1000,
   recentWindowMs: 5000,
@@ -2665,6 +2667,31 @@ function cleanupRequestHistory(now) {
     if (!entries.length || now - entries[entries.length - 1].timestamp > BEHAVIORAL_CONFIG.historyTtlMs) {
       REQUEST_HISTORY.delete(key);
     }
+  }
+
+  // Under broad scanner floods, many unique source IPs can arrive within TTL and
+  // avoid age-based cleanup. Apply a hard cap to prevent unbounded map growth.
+  if (REQUEST_HISTORY.size <= BEHAVIORAL_CONFIG.maxIpsHardCap) return;
+
+  const pruneCount = Math.max(
+    1,
+    Math.min(
+      BEHAVIORAL_CONFIG.maxIpsPruneBatch,
+      REQUEST_HISTORY.size - BEHAVIORAL_CONFIG.maxIpsBeforeCleanup
+    )
+  );
+
+  const oldestByLastSeen = [];
+  for (const [ip, entries] of REQUEST_HISTORY.entries()) {
+    const lastSeen = entries.length ? Number(entries[entries.length - 1].timestamp || 0) : 0;
+    oldestByLastSeen.push([ip, lastSeen]);
+  }
+
+  oldestByLastSeen.sort((a, b) => a[1] - b[1]);
+  for (let i = 0; i < pruneCount; i += 1) {
+    const item = oldestByLastSeen[i];
+    if (!item) break;
+    REQUEST_HISTORY.delete(item[0]);
   }
 }
 
@@ -7843,11 +7870,12 @@ const server = app.listen(PORT, async () => {
   await loadScannerPatterns();
 
   checkTurnstileReachable();
-  setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS);
+  const healthInterval = setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS);
+  if (typeof healthInterval.unref === "function") healthInterval.unref();
   startEventLoopLagMonitor();
 
   // Memory cleanup interval
-  setInterval(() => {
+  const memoryCleanupInterval = setInterval(() => {
     const now = Date.now();
     // Clean old rate limit buckets (older than 1 hour)
     for (const [key, value] of inMemBuckets.entries()) {
@@ -7880,8 +7908,10 @@ const server = app.listen(PORT, async () => {
 
     flushAggregatedLogs(now);
   }, 300000);
+  if (typeof memoryCleanupInterval.unref === "function") memoryCleanupInterval.unref();
 
-  setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS);
+  const logFlushInterval = setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS);
+  if (typeof logFlushInterval.unref === "function") logFlushInterval.unref();
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
