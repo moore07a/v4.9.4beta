@@ -1217,6 +1217,47 @@ let logFileDroppedLines = 0;
 let logFileWriterClosed = false;
 let logFileClosePromise = null;
 
+const OPEN_SOCKETS_WARN_THRESHOLD = Math.max(50, parseInt(process.env.OPEN_SOCKETS_WARN_THRESHOLD || "400", 10));
+const SSE_LISTENERS_WARN_THRESHOLD = Math.max(10, parseInt(process.env.SSE_LISTENERS_WARN_THRESHOLD || "120", 10));
+const LOG_FILE_QUEUE_WARN_BYTES = Math.max(128 * 1024, parseInt(process.env.LOG_FILE_QUEUE_WARN_BYTES || String(1024 * 1024), 10));
+let lastRuntimeGaugeAlertAt = 0;
+
+function getRuntimeResourceGauges() {
+  return {
+    openSockets: typeof openSockets === "object" && openSockets ? openSockets.size : 0,
+    sseListeners: LOG_LISTENERS.size,
+    logFileQueueLines: logFileQueue.length,
+    logFileQueueBytes,
+    logFileDroppedLines,
+    logFileDrainPending,
+    logFileStreamReady: Boolean(logFileStream)
+  };
+}
+
+function maybeEmitRuntimeGaugeAlerts(now = Date.now()) {
+  if ((now - lastRuntimeGaugeAlertAt) < 60000) return;
+  const gauges = getRuntimeResourceGauges();
+  const alerts = [];
+
+  if (gauges.openSockets >= OPEN_SOCKETS_WARN_THRESHOLD) {
+    alerts.push(`openSockets=${gauges.openSockets}>=${OPEN_SOCKETS_WARN_THRESHOLD}`);
+  }
+  if (gauges.sseListeners >= SSE_LISTENERS_WARN_THRESHOLD) {
+    alerts.push(`sseListeners=${gauges.sseListeners}>=${SSE_LISTENERS_WARN_THRESHOLD}`);
+  }
+  if (gauges.logFileQueueBytes >= LOG_FILE_QUEUE_WARN_BYTES) {
+    alerts.push(`logQueueBytes=${gauges.logFileQueueBytes}>=${LOG_FILE_QUEUE_WARN_BYTES}`);
+  }
+  if (gauges.logFileDroppedLines > 0) {
+    alerts.push(`droppedLogLines=${gauges.logFileDroppedLines}`);
+  }
+
+  if (!alerts.length) return;
+  lastRuntimeGaugeAlertAt = now;
+  addLog(`[ALERT:RUNTIME] ${alerts.join(" ")} queueLines=${gauges.logFileQueueLines} drainPending=${gauges.logFileDrainPending}`);
+  addSpacer();
+}
+
 function ensureLogFileStream() {
   if (!LOG_TO_FILE || logFileWriterClosed) return null;
   if (logFileStream) return logFileStream;
@@ -1228,6 +1269,9 @@ function ensureLogFileStream() {
       logFileWriteErrorAt = now;
       console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)}`);
     }
+  }).finally(() => {
+    logFileStream = null;
+    logFileClosePromise = null;
   });
   logFileStream.on("drain", () => {
     logFileDrainPending = false;
@@ -6519,6 +6563,7 @@ const handleHealth = (req, res) => {
   const statusCode = turnstileHealthy ? 200 : 503;
   const uptimeSec = Math.floor(process.uptime());
   const usage = getRuntimeUsageSnapshot();
+  const resourceGauges = getRuntimeResourceGauges();
   const currentRequestIsTracked = shouldTrackRuntimeRequest(req) ? 1 : 0;
   const inFlightRequests = getTrackedInFlightCount();
   const inFlightExcludingCurrent = Math.max(0, inFlightRequests - currentRequestIsTracked);
@@ -6562,7 +6607,8 @@ const handleHealth = (req, res) => {
       lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
       lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
-      memory: usage.memory
+      memory: usage.memory,
+      resources: resourceGauges
     },
     checks: {
       turnstile: {
@@ -6577,6 +6623,7 @@ const handleHealth = (req, res) => {
 
 const handleLiveness = (req, res) => {
   const usage = getRuntimeUsageSnapshot();
+  const resourceGauges = getRuntimeResourceGauges();
   const currentRequestIsTracked = shouldTrackRuntimeRequest(req) ? 1 : 0;
   const inFlightRequests = getTrackedInFlightCount();
   const inFlightExcludingCurrent = Math.max(0, inFlightRequests - currentRequestIsTracked);
@@ -6620,7 +6667,8 @@ const handleLiveness = (req, res) => {
       lastServerErrorAt: getEventTimestamp(runtimeStats.lastServerError),
       lastProcessWarningAt: getEventTimestamp(runtimeStats.lastProcessWarning),
       cpu: usage.cpu,
-      memory: usage.memory
+      memory: usage.memory,
+      resources: resourceGauges
     }
   });
 };
@@ -8087,6 +8135,7 @@ const server = app.listen(PORT, async () => {
     pruneAlertState(now);
     cleanupKnownScannerIps(now);
     cleanupRequestHistory(now);
+    maybeEmitRuntimeGaugeAlerts(now);
   }, 300000);
   trackIntervalHandle("memoryCleanup", memoryCleanupInterval);
 
