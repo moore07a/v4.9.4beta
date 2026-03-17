@@ -2319,13 +2319,19 @@ const KNOWN_SCANNER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const KNOWN_SCANNER_MAX = 10000;
 
 function cleanupKnownScannerIps(now = Date.now()) {
-  if (KNOWN_SCANNER_IPS.size <= KNOWN_SCANNER_MAX) return;
-  const entries = [...KNOWN_SCANNER_IPS.entries()].sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
-  const removeCount = Math.max(1, KNOWN_SCANNER_IPS.size - KNOWN_SCANNER_MAX);
-  for (let i = 0; i < removeCount; i++) KNOWN_SCANNER_IPS.delete(entries[i][0]);
   const staleBefore = now - KNOWN_SCANNER_TTL_MS;
   for (const [ip, entry] of KNOWN_SCANNER_IPS.entries()) {
     if ((entry.lastSeen || 0) < staleBefore) KNOWN_SCANNER_IPS.delete(ip);
+  }
+
+  if (KNOWN_SCANNER_IPS.size <= KNOWN_SCANNER_MAX) return;
+
+  const entries = [...KNOWN_SCANNER_IPS.entries()].sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
+  const removeCount = Math.max(1, KNOWN_SCANNER_IPS.size - KNOWN_SCANNER_MAX);
+  for (let i = 0; i < removeCount; i += 1) {
+    const item = entries[i];
+    if (!item) break;
+    KNOWN_SCANNER_IPS.delete(item[0]);
   }
 }
 
@@ -2335,7 +2341,13 @@ function recordScannerIp(ip, scannerName) {
   const existing = KNOWN_SCANNER_IPS.get(ip) || { count: 0, firstSeen: now, lastSeen: now, names: new Set() };
   existing.count += 1;
   existing.lastSeen = now;
-  if (scannerName) existing.names.add(scannerName);
+  if (scannerName) {
+    existing.names.add(String(scannerName).slice(0, 64));
+    if (existing.names.size > 12) {
+      const trimmed = Array.from(existing.names).slice(-12);
+      existing.names = new Set(trimmed);
+    }
+  }
   KNOWN_SCANNER_IPS.set(ip, existing);
   cleanupKnownScannerIps(now);
 }
@@ -2621,6 +2633,8 @@ const BEHAVIORAL_CONFIG = {
   historyTtlMs: 10 * 60 * 1000,
   maxHistoryPerIp: 50,
   maxIpsBeforeCleanup: 10000,
+  maxIpsHardCap: 12000,
+  maxIpsPruneBatch: 1000,
   cleanupIntervalMs: 5 * 60 * 1000,
   rapidFireWindowMs: 1000,
   recentWindowMs: 5000,
@@ -2665,6 +2679,31 @@ function cleanupRequestHistory(now) {
     if (!entries.length || now - entries[entries.length - 1].timestamp > BEHAVIORAL_CONFIG.historyTtlMs) {
       REQUEST_HISTORY.delete(key);
     }
+  }
+
+  // Under broad scanner floods, many unique source IPs can arrive within TTL and
+  // avoid age-based cleanup. Apply a hard cap to prevent unbounded map growth.
+  if (REQUEST_HISTORY.size <= BEHAVIORAL_CONFIG.maxIpsHardCap) return;
+
+  const pruneCount = Math.max(
+    1,
+    Math.min(
+      BEHAVIORAL_CONFIG.maxIpsPruneBatch,
+      REQUEST_HISTORY.size - BEHAVIORAL_CONFIG.maxIpsBeforeCleanup
+    )
+  );
+
+  const oldestByLastSeen = [];
+  for (const [ip, entries] of REQUEST_HISTORY.entries()) {
+    const lastSeen = entries.length ? Number(entries[entries.length - 1].timestamp || 0) : 0;
+    oldestByLastSeen.push([ip, lastSeen]);
+  }
+
+  oldestByLastSeen.sort((a, b) => a[1] - b[1]);
+  for (let i = 0; i < pruneCount; i += 1) {
+    const item = oldestByLastSeen[i];
+    if (!item) break;
+    REQUEST_HISTORY.delete(item[0]);
   }
 }
 
@@ -6558,6 +6597,7 @@ const handleStreamLog = (req, res) => {
   try { res.write(": hb-ready\n\n"); } catch {}
 
   const hb = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 25000);
+  if (typeof hb.unref === "function") hb.unref();
 
   let cleaned = false;
   function cleanup() {
@@ -6981,13 +7021,24 @@ app.get(
 );
 
 const adminHits = new Map();
+const ADMIN_HIT_WINDOW_MS = 60_000;
+const ADMIN_HIT_TTL_MS = 10 * 60_000;
+
+function pruneAdminHits(now = Date.now()) {
+  for (const [ip, rec] of adminHits.entries()) {
+    const resetAt = Number(rec && rec.resetAt || 0);
+    if (!resetAt || now - resetAt > ADMIN_HIT_TTL_MS) {
+      adminHits.delete(ip);
+    }
+  }
+}
+
 app.use(["/view-log", "/__debug", "/admin"], (req, res, next) => {
   if (isAdmin(req)) return next();
   const ip = getClientIp(req) || "unknown";
   const now = Date.now();
-  const winMs = 60_000;
-  const rec = adminHits.get(ip) || { count: 0, resetAt: now + winMs };
-  if (now > rec.resetAt) { rec.count = 0; rec.resetAt = now + winMs; }
+  const rec = adminHits.get(ip) || { count: 0, resetAt: now + ADMIN_HIT_WINDOW_MS };
+  if (now > rec.resetAt) { rec.count = 0; rec.resetAt = now + ADMIN_HIT_WINDOW_MS; }
   rec.count++;
   adminHits.set(ip, rec);
   if (rec.count > 120) return res.status(429).send("Too Many Requests");
@@ -7682,7 +7733,7 @@ var EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG
 
 function startEventLoopLagMonitor() {
   let expected = Date.now() + EVENT_LOOP_LAG_SAMPLE_MS;
-  setInterval(() => {
+  const interval = setInterval(() => {
     const now = Date.now();
     const lag = now - expected;
     expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
@@ -7699,6 +7750,7 @@ function startEventLoopLagMonitor() {
     const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;
     addLog(`[HEALTH] event-loop-lag=${Math.round(lag)}ms sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms rssMb=${rssMb} heapUsedMb=${heapUsedMb}`);
   }, EVENT_LOOP_LAG_SAMPLE_MS);
+  if (typeof interval.unref === "function") interval.unref();
 }
 
 // ================== STARTUP & HEALTH CHECKS ==================
@@ -7843,11 +7895,12 @@ const server = app.listen(PORT, async () => {
   await loadScannerPatterns();
 
   checkTurnstileReachable();
-  setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS);
+  const healthInterval = setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS);
+  if (typeof healthInterval.unref === "function") healthInterval.unref();
   startEventLoopLagMonitor();
 
   // Memory cleanup interval
-  setInterval(() => {
+  const memoryCleanupInterval = setInterval(() => {
     const now = Date.now();
     // Clean old rate limit buckets (older than 1 hour)
     for (const [key, value] of inMemBuckets.entries()) {
@@ -7879,9 +7932,15 @@ const server = app.listen(PORT, async () => {
     }
 
     flushAggregatedLogs(now);
+    pruneAdminHits(now);
+    pruneAlertState(now);
+    cleanupKnownScannerIps(now);
+    cleanupRequestHistory(now);
   }, 300000);
+  if (typeof memoryCleanupInterval.unref === "function") memoryCleanupInterval.unref();
 
-  setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS);
+  const logFlushInterval = setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS);
+  if (typeof logFlushInterval.unref === "function") logFlushInterval.unref();
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
