@@ -2319,13 +2319,19 @@ const KNOWN_SCANNER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const KNOWN_SCANNER_MAX = 10000;
 
 function cleanupKnownScannerIps(now = Date.now()) {
-  if (KNOWN_SCANNER_IPS.size <= KNOWN_SCANNER_MAX) return;
-  const entries = [...KNOWN_SCANNER_IPS.entries()].sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
-  const removeCount = Math.max(1, KNOWN_SCANNER_IPS.size - KNOWN_SCANNER_MAX);
-  for (let i = 0; i < removeCount; i++) KNOWN_SCANNER_IPS.delete(entries[i][0]);
   const staleBefore = now - KNOWN_SCANNER_TTL_MS;
   for (const [ip, entry] of KNOWN_SCANNER_IPS.entries()) {
     if ((entry.lastSeen || 0) < staleBefore) KNOWN_SCANNER_IPS.delete(ip);
+  }
+
+  if (KNOWN_SCANNER_IPS.size <= KNOWN_SCANNER_MAX) return;
+
+  const entries = [...KNOWN_SCANNER_IPS.entries()].sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
+  const removeCount = Math.max(1, KNOWN_SCANNER_IPS.size - KNOWN_SCANNER_MAX);
+  for (let i = 0; i < removeCount; i += 1) {
+    const item = entries[i];
+    if (!item) break;
+    KNOWN_SCANNER_IPS.delete(item[0]);
   }
 }
 
@@ -2335,7 +2341,13 @@ function recordScannerIp(ip, scannerName) {
   const existing = KNOWN_SCANNER_IPS.get(ip) || { count: 0, firstSeen: now, lastSeen: now, names: new Set() };
   existing.count += 1;
   existing.lastSeen = now;
-  if (scannerName) existing.names.add(scannerName);
+  if (scannerName) {
+    existing.names.add(String(scannerName).slice(0, 64));
+    if (existing.names.size > 12) {
+      const trimmed = Array.from(existing.names).slice(-12);
+      existing.names = new Set(trimmed);
+    }
+  }
   KNOWN_SCANNER_IPS.set(ip, existing);
   cleanupKnownScannerIps(now);
 }
@@ -6585,6 +6597,7 @@ const handleStreamLog = (req, res) => {
   try { res.write(": hb-ready\n\n"); } catch {}
 
   const hb = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 25000);
+  if (typeof hb.unref === "function") hb.unref();
 
   let cleaned = false;
   function cleanup() {
