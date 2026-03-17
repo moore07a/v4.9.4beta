@@ -28,6 +28,28 @@ const SERVER_HEADERS_TIMEOUT_MS = Math.max(
 );
 const SHUTDOWN_GRACE_MS = readMsEnv("SHUTDOWN_GRACE_MS", 10000, 1000);
 
+const backgroundTaskHandles = {
+  health: null,
+  eventLoopLag: null,
+  memoryCleanup: null,
+  logFlush: null
+};
+
+function trackIntervalHandle(name, handle) {
+  if (!handle) return null;
+  backgroundTaskHandles[name] = handle;
+  if (typeof handle.unref === "function") handle.unref();
+  return handle;
+}
+
+function clearBackgroundTasks() {
+  for (const [name, handle] of Object.entries(backgroundTaskHandles)) {
+    if (!handle) continue;
+    try { clearInterval(handle); } catch {}
+    backgroundTaskHandles[name] = null;
+  }
+}
+
 function normalizeTimeoutMs(ms, fallbackMs = FETCH_TIMEOUT_MS_DEFAULT) {
   const n = Number(ms);
   return Number.isFinite(n) && n > 0 ? n : fallbackMs;
@@ -7778,7 +7800,7 @@ function startEventLoopLagMonitor() {
     const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;
     addLog(`[HEALTH] event-loop-lag=${Math.round(lag)}ms sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms rssMb=${rssMb} heapUsedMb=${heapUsedMb}`);
   }, EVENT_LOOP_LAG_SAMPLE_MS);
-  if (typeof interval.unref === "function") interval.unref();
+  return trackIntervalHandle("eventLoopLag", interval);
 }
 
 // ================== STARTUP & HEALTH CHECKS ==================
@@ -7923,8 +7945,7 @@ const server = app.listen(PORT, async () => {
   await loadScannerPatterns();
 
   checkTurnstileReachable();
-  const healthInterval = setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS);
-  if (typeof healthInterval.unref === "function") healthInterval.unref();
+  trackIntervalHandle("health", setInterval(checkTurnstileReachable, HEALTH_INTERVAL_MS));
   startEventLoopLagMonitor();
 
   // Memory cleanup interval
@@ -7965,10 +7986,9 @@ const server = app.listen(PORT, async () => {
     cleanupKnownScannerIps(now);
     cleanupRequestHistory(now);
   }, 300000);
-  if (typeof memoryCleanupInterval.unref === "function") memoryCleanupInterval.unref();
+  trackIntervalHandle("memoryCleanup", memoryCleanupInterval);
 
-  const logFlushInterval = setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS);
-  if (typeof logFlushInterval.unref === "function") logFlushInterval.unref();
+  trackIntervalHandle("logFlush", setInterval(() => flushAggregatedLogs(Date.now()), AGG_FLUSH_MS));
 
   // Server + security summary logs
   addLog(`🚀 Server running on port ${PORT}`);
@@ -7987,6 +8007,12 @@ const server = app.listen(PORT, async () => {
 
 server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
 server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+
+const openSockets = new Set();
+server.on("connection", (socket) => {
+  openSockets.add(socket);
+  socket.on("close", () => openSockets.delete(socket));
+});
 
 server.on("clientError", (error, socket) => {
   runtimeStats.serverClientErrors += 1;
@@ -8065,8 +8091,16 @@ async function gracefulShutdown(signal) {
 
   addLog(`[SHUTDOWN] Received ${signal}; closing server (grace=${SHUTDOWN_GRACE_MS}ms)`);
 
+  clearBackgroundTasks();
+  for (const listenerRes of LOG_LISTENERS) {
+    try { listenerRes.end(); } catch {}
+  }
+
   const forceExitTimer = setTimeout(() => {
     addLog(`[SHUTDOWN] force exit after grace timeout (${SHUTDOWN_GRACE_MS}ms)`);
+    for (const socket of openSockets) {
+      try { socket.destroy(); } catch {}
+    }
     process.exit(1);
   }, SHUTDOWN_GRACE_MS);
 
