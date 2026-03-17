@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "soak:test": "node tests/soak-test.js"
   },
   "engines": {
     "node": ">=18"
