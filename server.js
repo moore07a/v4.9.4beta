@@ -1206,17 +1206,119 @@ const LOG_IDS = [];
 let LOG_SEQ = 0;
 const LOG_LISTENERS = new Set();
 let logFileWriteErrorAt = 0;
+let logFileDropWarnAt = 0;
+const LOG_FILE_QUEUE_MAX_LINES = Math.max(500, parseInt(process.env.LOG_FILE_QUEUE_MAX_LINES || "5000", 10));
+const LOG_FILE_QUEUE_MAX_BYTES = Math.max(256 * 1024, parseInt(process.env.LOG_FILE_QUEUE_MAX_BYTES || String(2 * 1024 * 1024), 10));
+let logFileStream = null;
+let logFileQueue = [];
+let logFileQueueBytes = 0;
+let logFileDrainPending = false;
+let logFileDroppedLines = 0;
+let logFileWriterClosed = false;
+let logFileClosePromise = null;
 
-function appendLogFileLine(line) {
-  if (!LOG_TO_FILE) return;
-  fs.appendFile(LOG_FILE, line, (err) => {
-    if (!err) return;
+function ensureLogFileStream() {
+  if (!LOG_TO_FILE || logFileWriterClosed) return null;
+  if (logFileStream) return logFileStream;
+
+  logFileStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
+  logFileStream.on("error", (err) => {
     const now = Date.now();
     if (now - logFileWriteErrorAt > 30000) {
       logFileWriteErrorAt = now;
-      console.error(`[LOG] append failed file=${LOG_FILE} err=${safeLogValue(err.message || err, 180)}`);
+      console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)}`);
     }
   });
+  logFileStream.on("drain", () => {
+    logFileDrainPending = false;
+    flushLogFileQueue();
+  });
+
+  return logFileStream;
+}
+
+function maybeWarnDroppedLogLines(now = Date.now()) {
+  if (logFileDroppedLines <= 0) return;
+  if (now - logFileDropWarnAt < 30000) return;
+  logFileDropWarnAt = now;
+  console.error(`[LOG] dropped lines due to queue pressure dropped=${logFileDroppedLines} queueLines=${logFileQueue.length} queueBytes=${logFileQueueBytes}`);
+}
+
+function flushLogFileQueue() {
+  if (!LOG_TO_FILE || logFileWriterClosed || logFileDrainPending) return;
+  const stream = ensureLogFileStream();
+  if (!stream) return;
+
+  while (logFileQueue.length > 0) {
+    const chunk = logFileQueue.shift();
+    logFileQueueBytes -= Buffer.byteLength(chunk, "utf8");
+    const ok = stream.write(chunk);
+    if (!ok) {
+      logFileDrainPending = true;
+      break;
+    }
+  }
+}
+
+function appendLogFileLine(line) {
+  if (!LOG_TO_FILE || logFileWriterClosed) return;
+  const chunk = String(line || "");
+  const chunkBytes = Buffer.byteLength(chunk, "utf8");
+
+  while (
+    logFileQueue.length >= LOG_FILE_QUEUE_MAX_LINES ||
+    (logFileQueueBytes + chunkBytes) > LOG_FILE_QUEUE_MAX_BYTES
+  ) {
+    const dropped = logFileQueue.shift();
+    if (!dropped) break;
+    logFileQueueBytes -= Buffer.byteLength(dropped, "utf8");
+    logFileDroppedLines += 1;
+  }
+
+  logFileQueue.push(chunk);
+  logFileQueueBytes += chunkBytes;
+  maybeWarnDroppedLogLines();
+  flushLogFileQueue();
+}
+
+function closeLogFileWriter(timeoutMs = 2000) {
+  if (!LOG_TO_FILE || !logFileStream || logFileWriterClosed) return Promise.resolve();
+  if (logFileClosePromise) return logFileClosePromise;
+
+  logFileWriterClosed = true;
+  logFileClosePromise = new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+
+    const timeout = setTimeout(finish, Math.max(250, timeoutMs));
+
+    try {
+      if (logFileQueue.length > 0) {
+        const remaining = logFileQueue.join("");
+        logFileQueue = [];
+        logFileQueueBytes = 0;
+        if (remaining) {
+          try { logFileStream.write(remaining); } catch {}
+        }
+      }
+      logFileStream.end(() => {
+        clearTimeout(timeout);
+        finish();
+      });
+    } catch {
+      clearTimeout(timeout);
+      finish();
+    }
+  }).finally(() => {
+    logFileStream = null;
+    logFileClosePromise = null;
+  });
+
+  return logFileClosePromise;
 }
 
 const AGG_WINDOW_MS = parseInt(process.env.LOG_AGG_WINDOW_MS || "60000", 10);
@@ -8095,6 +8197,7 @@ async function gracefulShutdown(signal) {
   for (const listenerRes of LOG_LISTENERS) {
     try { listenerRes.end(); } catch {}
   }
+  await closeLogFileWriter(Math.min(2000, SHUTDOWN_GRACE_MS));
 
   const forceExitTimer = setTimeout(() => {
     addLog(`[SHUTDOWN] force exit after grace timeout (${SHUTDOWN_GRACE_MS}ms)`);
