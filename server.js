@@ -7008,13 +7008,24 @@ app.get(
 );
 
 const adminHits = new Map();
+const ADMIN_HIT_WINDOW_MS = 60_000;
+const ADMIN_HIT_TTL_MS = 10 * 60_000;
+
+function pruneAdminHits(now = Date.now()) {
+  for (const [ip, rec] of adminHits.entries()) {
+    const resetAt = Number(rec && rec.resetAt || 0);
+    if (!resetAt || now - resetAt > ADMIN_HIT_TTL_MS) {
+      adminHits.delete(ip);
+    }
+  }
+}
+
 app.use(["/view-log", "/__debug", "/admin"], (req, res, next) => {
   if (isAdmin(req)) return next();
   const ip = getClientIp(req) || "unknown";
   const now = Date.now();
-  const winMs = 60_000;
-  const rec = adminHits.get(ip) || { count: 0, resetAt: now + winMs };
-  if (now > rec.resetAt) { rec.count = 0; rec.resetAt = now + winMs; }
+  const rec = adminHits.get(ip) || { count: 0, resetAt: now + ADMIN_HIT_WINDOW_MS };
+  if (now > rec.resetAt) { rec.count = 0; rec.resetAt = now + ADMIN_HIT_WINDOW_MS; }
   rec.count++;
   adminHits.set(ip, rec);
   if (rec.count > 120) return res.status(429).send("Too Many Requests");
@@ -7709,7 +7720,7 @@ var EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG
 
 function startEventLoopLagMonitor() {
   let expected = Date.now() + EVENT_LOOP_LAG_SAMPLE_MS;
-  setInterval(() => {
+  const interval = setInterval(() => {
     const now = Date.now();
     const lag = now - expected;
     expected = now + EVENT_LOOP_LAG_SAMPLE_MS;
@@ -7726,6 +7737,7 @@ function startEventLoopLagMonitor() {
     const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;
     addLog(`[HEALTH] event-loop-lag=${Math.round(lag)}ms sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms rssMb=${rssMb} heapUsedMb=${heapUsedMb}`);
   }, EVENT_LOOP_LAG_SAMPLE_MS);
+  if (typeof interval.unref === "function") interval.unref();
 }
 
 // ================== STARTUP & HEALTH CHECKS ==================
@@ -7907,6 +7919,10 @@ const server = app.listen(PORT, async () => {
     }
 
     flushAggregatedLogs(now);
+    pruneAdminHits(now);
+    pruneAlertState(now);
+    cleanupKnownScannerIps(now);
+    cleanupRequestHistory(now);
   }, 300000);
   if (typeof memoryCleanupInterval.unref === "function") memoryCleanupInterval.unref();
 
