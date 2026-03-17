@@ -1493,12 +1493,40 @@ function addStrike(ip, weight=1){
 function makeIpLimiter({ capacity, windowSec, keyPrefix }) {
   const RATE_PER_MS_LOCAL = capacity / (windowSec * 1000);
   const buckets = new Map();
+  const cleanupEveryMs = 60 * 1000;
+  const bucketTtlMs = Math.max(windowSec * 1000 * 4, 10 * 60 * 1000);
+  const bucketMaxEntries = 20000;
+  let lastCleanupAt = 0;
+
+  function pruneBuckets(now) {
+    if ((now - lastCleanupAt) < cleanupEveryMs && buckets.size <= bucketMaxEntries) return;
+    lastCleanupAt = now;
+
+    for (const [k, st] of buckets.entries()) {
+      if (!st || typeof st.ts !== "number" || (now - st.ts) > bucketTtlMs) {
+        buckets.delete(k);
+      }
+    }
+
+    if (buckets.size <= bucketMaxEntries) return;
+    const oldest = [...buckets.entries()].sort((a, b) => (a[1]?.ts || 0) - (b[1]?.ts || 0));
+    const pruneCount = Math.max(1, buckets.size - bucketMaxEntries);
+    for (let i = 0; i < pruneCount; i += 1) {
+      const item = oldest[i];
+      if (!item) break;
+      buckets.delete(item[0]);
+    }
+  }
+
   return function ipLimit(req, res, next) {
     if (isAdmin?.(req) || isAdminSSE?.(req)) return next();
     const ip = getClientIp(req) || "unknown";
     const safeIp = sanitizeIpForKey(ip);
     const key = `${keyPrefix}:${safeIp}`;
     const now = Date.now();
+
+    pruneBuckets(now);
+
     let st = buckets.get(key);
     if (!st) st = { tokens: capacity, ts: now };
     if (now > st.ts) {
