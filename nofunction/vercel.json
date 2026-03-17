@@ -1,0 +1,44 @@
+{
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "https://v42beta-beta-v.up.railway.app/health"
+    },
+    {
+      "source": "/view-log", 
+      "destination": "https://v42beta-beta-v.up.railway.app/view-log"
+    },
+    {
+      "source": "/turnstile-sitekey",
+      "destination": "https://v42beta-beta-v.up.railway.app/turnstile-sitekey"
+    },
+    {
+      "source": "/verify-turnstile",
+      "destination": "https://v42beta-beta-v.up.railway.app/verify-turnstile"
+    },
+    {
+      "source": "/ts-client-log",
+      "destination": "https://v42beta-beta-v.up.railway.app/ts-client-log"
+    },
+    {
+      "source": "/decrypt-challenge-data", 
+      "destination": "https://v42beta-beta-v.up.railway.app/decrypt-challenge-data"
+    },
+    {
+      "source": "/challenge",
+      "destination": "https://v42beta-beta-v.up.railway.app/challenge"
+    },
+    {
+      "source": "/r",
+      "destination": "https://v42beta-beta-v.up.railway.app/r"
+    },
+    {
+      "source": "/e/:path*",
+      "destination": "https://v42beta-beta-v.up.railway.app/e/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "https://v42beta-beta-v.up.railway.app/$1"
+    }
+  ]
+}
