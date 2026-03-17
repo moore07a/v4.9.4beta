@@ -1277,6 +1277,10 @@ function ensureLogFileStream() {
     logFileDrainPending = false;
     flushLogFileQueue();
   });
+  logFileStream.on("drain", () => {
+    logFileDrainPending = false;
+    flushLogFileQueue();
+  });
 
   return logFileStream;
 }
@@ -1357,10 +1361,18 @@ function closeLogFileWriter(timeoutMs = 2000) {
       clearTimeout(timeout);
       finish();
     }
-  }).finally(() => {
-    logFileStream = null;
-    logFileClosePromise = null;
   });
+
+  logFileClosePromise.then(
+    () => {
+      logFileStream = null;
+      logFileClosePromise = null;
+    },
+    () => {
+      logFileStream = null;
+      logFileClosePromise = null;
+    }
+  );
 
   return logFileClosePromise;
 }
