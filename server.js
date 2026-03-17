@@ -1269,6 +1269,9 @@ function ensureLogFileStream() {
       logFileWriteErrorAt = now;
       console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)}`);
     }
+  }).finally(() => {
+    logFileStream = null;
+    logFileClosePromise = null;
   });
   logFileStream.on("drain", () => {
     logFileDrainPending = false;
