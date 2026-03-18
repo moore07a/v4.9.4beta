@@ -3749,8 +3749,14 @@ function decryptAndParseUrl(req, baseString) {
   };
   addLog(`[PATH-NORMALIZE] ${safeLogJson(parserLogCtx, LOG_ENTRY_MAX_LENGTH)}`);
 
-  const candidates = [{ mode: "legacy", value: baseString }];
-  if (flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString) {
+  const hasNormalizedFlexible = flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString;
+  const shouldPreferFlexible = hasNormalizedFlexible && !!flexibleParse.email;
+
+  const candidates = shouldPreferFlexible
+    ? [{ mode: "flexible", value: flexibleParse.normalizedBaseString }, { mode: "legacy", value: baseString }]
+    : [{ mode: "legacy", value: baseString }];
+
+  if (hasNormalizedFlexible && !shouldPreferFlexible) {
     candidates.push({ mode: "flexible", value: flexibleParse.normalizedBaseString });
   }
 
