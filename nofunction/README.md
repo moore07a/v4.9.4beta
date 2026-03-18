@@ -38,3 +38,18 @@ Keep proxy rewrite mode here, and relax the CF-header gate for trusted proxy tra
 ## Important: set backend host
 
 Replace `https://YOUR_BACKEND_HOST` in both files with your real Railway/API host (no trailing slash).
+
+## New default behavior for `REQUIRE_CF_HEADERS=true`
+
+Backend now allows trusted Vercel/Netlify proxy requests even when Cloudflare headers are absent, as long as platform identity headers are present:
+
+- Vercel: `x-vercel-id` or `x-vercel-proxy-signature`
+- Netlify: `x-nf-request-id`
+- plus forwarded IP (`x-forwarded-for` or `x-real-ip`)
+
+Control this with:
+
+- `ALLOW_NON_CF_PROXY_HEADERS=true` (default, supports legacy `REQUIRE_CF_HEADERS_ALLOW_PLATFORM_PROXY`)
+
+Set it to `false` if you want hard Cloudflare-only enforcement in every environment.
+

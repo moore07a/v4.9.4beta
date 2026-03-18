@@ -333,6 +333,7 @@ app.set('trust proxy', trustProxyEffective);
 console.log(`[PROXY] Effective trust proxy setting: ${trustProxyEffective}`);
 
 const REQUIRE_CF_HEADERS = (process.env.REQUIRE_CF_HEADERS || "").toLowerCase() === "true";
+const ALLOW_NON_CF_PROXY_HEADERS = (process.env.ALLOW_NON_CF_PROXY_HEADERS || process.env.REQUIRE_CF_HEADERS_ALLOW_PLATFORM_PROXY || "true").toLowerCase() === "true";
 
 // ------------ Enhanced Global Security Headers ---------------
 app.use((req, res, next) => {
@@ -821,6 +822,13 @@ function hasCloudflareHeaders(req) {
     req.headers["cf-ray"] ||
     req.headers["cf-visitor"]
   );
+}
+
+function hasKnownPlatformProxyHeaders(req) {
+  const hasForwardedIp = Boolean(req.headers["x-forwarded-for"] || req.headers["x-real-ip"]);
+  const fromVercel = Boolean(req.headers["x-vercel-id"] || req.headers["x-vercel-proxy-signature"]);
+  const fromNetlify = Boolean(req.headers["x-nf-request-id"]);
+  return hasForwardedIp && (fromVercel || fromNetlify);
 }
 
 function decodeB64Any(s) {
@@ -3539,14 +3547,23 @@ function checkSecurityPolicies(req) {
   }
 
   if (REQUIRE_CF_HEADERS && !hasCloudflareHeaders(req)) {
-    addLog(
-      `[CF] missing headers ip=${safeLogValue(ip)} ua="${safeLogValue(
-        ua.slice(0, UA_TRUNCATE_LENGTH)
-      )}"`
-    );
-    addSpacer();
-    recordOffenderSignals(req);
-    return { blocked: true, status: 403, message: "Forbidden" };
+    if (ALLOW_NON_CF_PROXY_HEADERS && hasKnownPlatformProxyHeaders(req)) {
+      addLog(
+        `[CF] missing headers but accepted known platform proxy ip=${safeLogValue(ip)} ua="${safeLogValue(
+          ua.slice(0, UA_TRUNCATE_LENGTH)
+        )}"`
+      );
+      addSpacer();
+    } else {
+      addLog(
+        `[CF] missing headers ip=${safeLogValue(ip)} ua="${safeLogValue(
+          ua.slice(0, UA_TRUNCATE_LENGTH)
+        )}"`
+      );
+      addSpacer();
+      recordOffenderSignals(req);
+      return { blocked: true, status: 403, message: "Forbidden" };
+    }
   }
 
   if (bypassInterstitial) {
@@ -3732,8 +3749,14 @@ function decryptAndParseUrl(req, baseString) {
   };
   addLog(`[PATH-NORMALIZE] ${safeLogJson(parserLogCtx, LOG_ENTRY_MAX_LENGTH)}`);
 
-  const candidates = [{ mode: "legacy", value: baseString }];
-  if (flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString) {
+  const hasNormalizedFlexible = flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString;
+  const shouldPreferFlexible = hasNormalizedFlexible && !!flexibleParse.email;
+
+  const candidates = shouldPreferFlexible
+    ? [{ mode: "flexible", value: flexibleParse.normalizedBaseString }, { mode: "legacy", value: baseString }]
+    : [{ mode: "legacy", value: baseString }];
+
+  if (hasNormalizedFlexible && !shouldPreferFlexible) {
     candidates.push({ mode: "flexible", value: flexibleParse.normalizedBaseString });
   }
 
