@@ -131,3 +131,15 @@ test('validateBase64Url accepts platform-collapsed ignored URL before email', ()
 test('validateBase64Url accepts platform-collapsed ignored URL after email', () => {
   assert.equal(validateBase64Url(`${payload}/${b64urlEmail}/url=https:/test.com`), true);
 });
+
+test('validateBase64Url accepts email-first then full url= ignored segment', () => {
+  assert.equal(validateBase64Url(`${payload}//${b64urlEmail}/url=https://test.com`), true);
+});
+
+test('validateBase64Url accepts email-first ignored URL with path segments', () => {
+  assert.equal(validateBase64Url(`${payload}//${b64urlEmail}/https://test.com/path`), true);
+});
+
+test('validateBase64Url accepts ignored URL with path segments before email', () => {
+  assert.equal(validateBase64Url(`${payload}/https://test.com/path//${b64urlEmail}`), true);
+});
