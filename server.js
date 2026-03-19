@@ -1021,16 +1021,25 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
     return '';
   };
 
-  if (segments.length === 3) {
-    const ignoredThenEmail = joinCollapsedUrlParts(segments[0], segments[1]);
+  const joinCollapsedUrlSegments = (parts) => {
+    const list = Array.isArray(parts) ? parts.filter(Boolean) : [];
+    if (list.length < 2) return '';
+    const head = joinCollapsedUrlParts(list[0], list[1]);
+    if (!head) return '';
+    if (list.length === 2) return head;
+    return `${head}/${list.slice(2).join('/')}`;
+  };
+
+  if (segments.length >= 3) {
+    const ignoredThenEmail = joinCollapsedUrlSegments(segments.slice(0, -1));
     if (ignoredThenEmail) {
-      const emailCandidate = detectEncodedEmailSegment(segments[2], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+      const emailCandidate = detectEncodedEmailSegment(segments[segments.length - 1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
       if (emailCandidate.isEmail) {
         return finishWithEmail(emailCandidate.raw, ignoredThenEmail, 'segment3');
       }
     }
 
-    const emailThenIgnored = joinCollapsedUrlParts(segments[1], segments[2]);
+    const emailThenIgnored = joinCollapsedUrlSegments(segments.slice(1));
     if (emailThenIgnored) {
       const emailCandidate = detectEncodedEmailSegment(segments[0], decodeBase64UrlLoose, decodeFallback, isValidEmail);
       if (emailCandidate.isEmail) {
