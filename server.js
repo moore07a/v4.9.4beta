@@ -964,7 +964,6 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
   } = helpers;
 
   const input = String(pathValue || '').replace(/^\/+|\/+$/g, '');
-  const segments = input ? input.split('/').filter(Boolean) : [];
 
   const result = {
     matchedNewFormat: false,
@@ -977,22 +976,92 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
     normalizedBaseString: null
   };
 
-  if (segments.length !== 2 && segments.length !== 3) return result;
+  const firstSlash = input.indexOf('/');
+  if (firstSlash <= 0) return result;
 
-  const payload = String(segments[0] || '');
+  const payload = String(input.slice(0, firstSlash) || '');
   if (!payload) return result;
+  const remainder = String(input.slice(firstSlash + 1) || '');
+  if (!remainder) return result;
 
-  if (segments.length === 2) {
+  const finishWithEmail = (emailRaw, ignoredRaw, emailSegment) => {
     result.matchedNewFormat = true;
     result.payload = payload;
-    result.ignoredSegment = segments[1] || null;
+    result.email = emailRaw;
+    result.ignoredSegment = String(ignoredRaw || '').replace(/^\/+|\/+$/g, '') || null;
+    result.parseMode = emailSegment === 'segment2' ? 'payload_email_ignored' : 'payload_ignored_email';
+    result.emailSegment = emailSegment;
+    result.normalizedBaseString = `${payload}/${emailRaw}`;
+    return result;
+  };
+
+  const emailFirstMatch = remainder.match(/^\/\/([^/]+)(?:\/(.*))?$/);
+  if (emailFirstMatch) {
+    const emailCandidate = detectEncodedEmailSegment(emailFirstMatch[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+    if (emailCandidate.isEmail) {
+      return finishWithEmail(emailCandidate.raw, emailFirstMatch[2] || '', 'segment2');
+    }
+  }
+
+  const lastDoubleSlash = remainder.lastIndexOf('//');
+  if (lastDoubleSlash > 0) {
+    const ignoredRaw = remainder.slice(0, lastDoubleSlash);
+    const emailRaw = remainder.slice(lastDoubleSlash + 2);
+    const emailCandidate = detectEncodedEmailSegment(emailRaw, decodeBase64UrlLoose, decodeFallback, isValidEmail);
+    if (emailCandidate.isEmail) {
+      return finishWithEmail(emailCandidate.raw, ignoredRaw, 'segment3');
+    }
+  }
+
+  const segments = remainder.split('/').filter(Boolean);
+  const joinCollapsedUrlParts = (left, right) => {
+    const combined = `${String(left || '').trim()}/${String(right || '').trim()}`;
+    const raw = combined.startsWith('url=') ? combined.slice(4) : combined;
+    if (/^https?:\/[^/]/i.test(raw)) return combined;
+    return '';
+  };
+
+  if (segments.length === 3) {
+    const ignoredThenEmail = joinCollapsedUrlParts(segments[0], segments[1]);
+    if (ignoredThenEmail) {
+      const emailCandidate = detectEncodedEmailSegment(segments[2], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+      if (emailCandidate.isEmail) {
+        return finishWithEmail(emailCandidate.raw, ignoredThenEmail, 'segment3');
+      }
+    }
+
+    const emailThenIgnored = joinCollapsedUrlParts(segments[1], segments[2]);
+    if (emailThenIgnored) {
+      const emailCandidate = detectEncodedEmailSegment(segments[0], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+      if (emailCandidate.isEmail) {
+        return finishWithEmail(emailCandidate.raw, emailThenIgnored, 'segment2');
+      }
+    }
+  }
+
+  if (segments.length !== 1 && segments.length !== 2) {
+    if (remainder.includes('://')) {
+      result.matchedNewFormat = true;
+      result.payload = payload;
+      result.ignoredSegment = remainder;
+      result.parseMode = 'payload_ignored';
+      result.normalizedBaseString = payload;
+      return result;
+    }
+    return result;
+  }
+
+  if (segments.length === 1) {
+    result.matchedNewFormat = true;
+    result.payload = payload;
+    result.ignoredSegment = segments[0] || null;
     result.parseMode = 'payload_ignored';
     result.normalizedBaseString = payload;
     return result;
   }
 
-  const candidate2 = detectEncodedEmailSegment(segments[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
-  const candidate3 = detectEncodedEmailSegment(segments[2], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+  const candidate2 = detectEncodedEmailSegment(segments[0], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+  const candidate3 = detectEncodedEmailSegment(segments[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
 
   if (candidate2.isEmail && candidate3.isEmail) {
     result.matchedNewFormat = true;
@@ -1005,14 +1074,14 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
   if (!candidate2.isEmail && !candidate3.isEmail) {
     result.matchedNewFormat = true;
     result.payload = payload;
-    result.ignoredSegment = segments[1] || null;
+    result.ignoredSegment = segments[0] || null;
     result.parseMode = 'payload_ignored_no_email';
     result.normalizedBaseString = payload;
     return result;
   }
 
   const emailCandidate = candidate2.isEmail ? candidate2 : candidate3;
-  const ignoredSegment = candidate2.isEmail ? segments[2] : segments[1];
+  const ignoredSegment = candidate2.isEmail ? segments[1] : segments[0];
   const emailSegment = candidate2.isEmail ? 'segment2' : 'segment3';
 
   result.matchedNewFormat = true;
