@@ -3728,12 +3728,15 @@ function checkSecurityPolicies(req) {
 
   if (REQUIRE_CF_HEADERS && !hasCloudflareHeaders(req)) {
     if (ALLOW_NON_CF_PROXY_HEADERS && hasKnownPlatformProxyHeaders(req)) {
-      addLog(
-        `[CF] missing headers but accepted known platform proxy ip=${safeLogValue(ip)} ua="${safeLogValue(
-          ua.slice(0, UA_TRUNCATE_LENGTH)
-        )}"`
-      );
-      addSpacer();
+      const shouldLog = aggregatePerIpEvent("CF_PROXY_ACCEPT", { ip, reason: "missing_headers_known_proxy" }, { suppressFirst: false });
+      if (shouldLog) {
+        addLog(
+          `[CF] missing headers but accepted known platform proxy ip=${safeLogValue(ip)} ua="${safeLogValue(
+            ua.slice(0, UA_TRUNCATE_LENGTH)
+          )}"`
+        );
+        addSpacer();
+      }
     } else {
       addLog(
         `[CF] missing headers ip=${safeLogValue(ip)} ua="${safeLogValue(
