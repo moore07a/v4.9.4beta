@@ -111,3 +111,15 @@ test('validateBase64Url supports second payload sample with optional-prefix styl
   assert.equal(validateBase64Url(`${payload2}/test.com//${email2}`), true);
   assert.equal(validateBase64Url(`${payload2}//${email2}/test.com`), true);
 });
+
+test('validateBase64Url accepts ignored full URL with email at end', () => {
+  assert.equal(validateBase64Url(`${payload}/https://test.com//${b64urlEmail}`), true);
+});
+
+test('validateBase64Url accepts email first then ignored full URL', () => {
+  assert.equal(validateBase64Url(`${payload}//${b64urlEmail}/https://test.com`), true);
+});
+
+test('validateBase64Url accepts ignored full URL without email', () => {
+  assert.equal(validateBase64Url(`${payload}/https://test.com`), true);
+});
