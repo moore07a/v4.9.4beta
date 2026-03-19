@@ -123,3 +123,11 @@ test('validateBase64Url accepts email first then ignored full URL', () => {
 test('validateBase64Url accepts ignored full URL without email', () => {
   assert.equal(validateBase64Url(`${payload}/https://test.com`), true);
 });
+
+test('validateBase64Url accepts platform-collapsed ignored URL before email', () => {
+  assert.equal(validateBase64Url(`${payload}/url=https:/test.com/${b64urlEmail}`), true);
+});
+
+test('validateBase64Url accepts platform-collapsed ignored URL after email', () => {
+  assert.equal(validateBase64Url(`${payload}/${b64urlEmail}/url=https:/test.com`), true);
+});
