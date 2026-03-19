@@ -32,7 +32,8 @@ const backgroundTaskHandles = {
   health: null,
   eventLoopLag: null,
   memoryCleanup: null,
-  logFlush: null
+  logFlush: null,
+  behavioralCleanup: null
 };
 
 function trackIntervalHandle(name, handle) {
@@ -1229,6 +1230,13 @@ const OPEN_SOCKETS_WARN_THRESHOLD = Math.max(50, parseInt(process.env.OPEN_SOCKE
 const SSE_LISTENERS_WARN_THRESHOLD = Math.max(10, parseInt(process.env.SSE_LISTENERS_WARN_THRESHOLD || "120", 10));
 const LOG_FILE_QUEUE_WARN_BYTES = Math.max(128 * 1024, parseInt(process.env.LOG_FILE_QUEUE_WARN_BYTES || String(1024 * 1024), 10));
 let lastRuntimeGaugeAlertAt = 0;
+const REQUEST_HISTORY_WARN_THRESHOLD = Math.max(500, parseInt(process.env.REQUEST_HISTORY_WARN_THRESHOLD || "9000", 10));
+const INTERSTITIAL_STATE_WARN_THRESHOLD = Math.max(500, parseInt(process.env.INTERSTITIAL_STATE_WARN_THRESHOLD || "8000", 10));
+const KNOWN_SCANNER_IPS_WARN_THRESHOLD = Math.max(500, parseInt(process.env.KNOWN_SCANNER_IPS_WARN_THRESHOLD || "8000", 10));
+const ADMIN_HITS_WARN_THRESHOLD = Math.max(100, parseInt(process.env.ADMIN_HITS_WARN_THRESHOLD || "2000", 10));
+const HEAP_PRESSURE_WARN_MB = Math.max(64, parseInt(process.env.HEAP_PRESSURE_WARN_MB || "384", 10));
+const HEAP_PRESSURE_COOLDOWN_MS = Math.max(10_000, parseInt(process.env.HEAP_PRESSURE_COOLDOWN_MS || "60000", 10));
+let lastHeapPressureAt = 0;
 
 function getRuntimeResourceGauges() {
   return {
@@ -1238,7 +1246,11 @@ function getRuntimeResourceGauges() {
     logFileQueueBytes,
     logFileDroppedLines,
     logFileDrainPending,
-    logFileStreamReady: Boolean(logFileStream)
+    logFileStreamReady: Boolean(logFileStream),
+    requestHistorySize: REQUEST_HISTORY.size,
+    interstitialStateSize: INTERSTITIAL_STATE.size,
+    knownScannerIpsSize: KNOWN_SCANNER_IPS.size,
+    adminHitsSize: adminHits.size
   };
 }
 
@@ -1258,6 +1270,18 @@ function maybeEmitRuntimeGaugeAlerts(now = Date.now()) {
   }
   if (gauges.logFileDroppedLines > 0) {
     alerts.push(`droppedLogLines=${gauges.logFileDroppedLines}`);
+  }
+  if (gauges.requestHistorySize >= REQUEST_HISTORY_WARN_THRESHOLD) {
+    alerts.push(`requestHistory=${gauges.requestHistorySize}>=${REQUEST_HISTORY_WARN_THRESHOLD}`);
+  }
+  if (gauges.interstitialStateSize >= INTERSTITIAL_STATE_WARN_THRESHOLD) {
+    alerts.push(`interstitialState=${gauges.interstitialStateSize}>=${INTERSTITIAL_STATE_WARN_THRESHOLD}`);
+  }
+  if (gauges.knownScannerIpsSize >= KNOWN_SCANNER_IPS_WARN_THRESHOLD) {
+    alerts.push(`knownScannerIps=${gauges.knownScannerIpsSize}>=${KNOWN_SCANNER_IPS_WARN_THRESHOLD}`);
+  }
+  if (gauges.adminHitsSize >= ADMIN_HITS_WARN_THRESHOLD) {
+    alerts.push(`adminHits=${gauges.adminHitsSize}>=${ADMIN_HITS_WARN_THRESHOLD}`);
   }
 
   if (!alerts.length) return;
@@ -2917,8 +2941,10 @@ function cleanupRequestHistory(now) {
 }
 
 if (BEHAVIORAL_CONFIG.cleanupIntervalMs > 0) {
-  const interval = setInterval(() => cleanupRequestHistory(Date.now()), BEHAVIORAL_CONFIG.cleanupIntervalMs);
-  if (typeof interval.unref === "function") interval.unref();
+  trackIntervalHandle(
+    "behavioralCleanup",
+    setInterval(() => cleanupRequestHistory(Date.now()), BEHAVIORAL_CONFIG.cleanupIntervalMs)
+  );
 }
 
 function trackRequestForBehavior(req) {
@@ -3308,6 +3334,82 @@ function pruneInterstitialState(now) {
   if (firstKey) {
     INTERSTITIAL_STATE.delete(firstKey);
   }
+}
+
+function pruneMapToTargetSize(map, targetSize, getRankValue = null) {
+  if (!map || map.size <= targetSize) return 0;
+  const removeCount = Math.max(1, map.size - targetSize);
+  let removed = 0;
+
+  if (typeof getRankValue === "function") {
+    const ranked = [];
+    for (const [key, value] of map.entries()) {
+      ranked.push([key, Number(getRankValue(value, key)) || 0]);
+    }
+    ranked.sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < removeCount; i += 1) {
+      const item = ranked[i];
+      if (!item) break;
+      if (map.delete(item[0])) removed += 1;
+    }
+    return removed;
+  }
+
+  const keys = map.keys();
+  while (map.size > targetSize) {
+    const next = keys.next();
+    if (!next || next.done) break;
+    if (map.delete(next.value)) removed += 1;
+  }
+  return removed;
+}
+
+function applyMemoryPressureRelief(now = Date.now(), reason = "periodic") {
+  const targetHistory = Math.max(500, Math.floor(BEHAVIORAL_CONFIG.maxIpsBeforeCleanup * 0.6));
+  const targetInterstitial = Math.max(500, Math.floor(INTERSTITIAL_MAX_ENTRIES * 0.6));
+  const targetKnownScanners = Math.max(500, Math.floor(KNOWN_SCANNER_MAX * 0.6));
+  const targetAdminHits = Math.max(100, Math.floor(ADMIN_HIT_TTL_MS / 1000));
+
+  const evicted = {
+    requestHistory: 0,
+    interstitialState: 0,
+    knownScannerIps: 0,
+    adminHits: 0
+  };
+
+  if (REQUEST_HISTORY.size > targetHistory) {
+    evicted.requestHistory = pruneMapToTargetSize(REQUEST_HISTORY, targetHistory, (entries) => {
+      if (!Array.isArray(entries) || !entries.length) return 0;
+      return Number(entries[entries.length - 1].timestamp || 0);
+    });
+  }
+  if (INTERSTITIAL_STATE.size > targetInterstitial) {
+    evicted.interstitialState = pruneMapToTargetSize(
+      INTERSTITIAL_STATE,
+      targetInterstitial,
+      (entry) => Number(entry && entry.lastSeenAt || 0)
+    );
+  }
+  if (KNOWN_SCANNER_IPS.size > targetKnownScanners) {
+    evicted.knownScannerIps = pruneMapToTargetSize(
+      KNOWN_SCANNER_IPS,
+      targetKnownScanners,
+      (entry) => Number(entry && entry.lastSeen || 0)
+    );
+  }
+  if (adminHits.size > targetAdminHits) {
+    evicted.adminHits = pruneMapToTargetSize(
+      adminHits,
+      targetAdminHits,
+      (entry) => Number(entry && entry.resetAt || 0)
+    );
+  }
+
+  const totalEvicted = Object.values(evicted).reduce((sum, n) => sum + n, 0);
+  if (totalEvicted > 0) {
+    addLog(`[MEMORY] relief reason=${safeLogValue(reason, 48)} evicted=${totalEvicted} requestHistory=${evicted.requestHistory} interstitial=${evicted.interstitialState} knownScannerIps=${evicted.knownScannerIps} adminHits=${evicted.adminHits}`);
+  }
+  return totalEvicted;
 }
 
 function markInterstitialShown(nextEnc) {
@@ -8129,6 +8231,8 @@ const server = app.listen(PORT, async () => {
   // Memory cleanup interval
   const memoryCleanupInterval = setInterval(() => {
     const now = Date.now();
+    const mem = process.memoryUsage();
+    const heapUsedMb = Math.round(mem.heapUsed / (1024 * 1024));
     // Clean old rate limit buckets (older than 1 hour)
     for (const [key, value] of inMemBuckets.entries()) {
       if (now - value.ts > 3600000) { // 1 hour
@@ -8163,6 +8267,13 @@ const server = app.listen(PORT, async () => {
     pruneAlertState(now);
     cleanupKnownScannerIps(now);
     cleanupRequestHistory(now);
+
+    if (heapUsedMb >= HEAP_PRESSURE_WARN_MB && (now - lastHeapPressureAt) >= HEAP_PRESSURE_COOLDOWN_MS) {
+      lastHeapPressureAt = now;
+      const evicted = applyMemoryPressureRelief(now, `heap_used_mb_${heapUsedMb}`);
+      addLog(`[MEMORY] pressure heapUsedMb=${heapUsedMb} thresholdMb=${HEAP_PRESSURE_WARN_MB} evicted=${evicted}`);
+    }
+
     maybeEmitRuntimeGaugeAlerts(now);
   }, 300000);
   trackIntervalHandle("memoryCleanup", memoryCleanupInterval);
