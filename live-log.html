@@ -204,11 +204,20 @@
 
   function pushLine(line) {
     if (!line) return;
-    const expanded = String(line)
+    // Normalize real and escaped newline variants.
+    // Handles: \n, \\n, \r\n, \\r\\n
+    let expanded = String(line)
+      .replace(/\\\\r\\\\n/g, '\n')
+      .replace(/\\\\n/g, '\n')
       .replace(/\\r\\n/g, '\n')
       .replace(/\\n/g, '\n')
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n');
+    // Some payloads can arrive with repeated escaping (e.g. "\\\\n").
+    // Apply one more normalization pass if needed.
+    if (expanded.includes('\\n') || expanded.includes('\\r\\n')) {
+      expanded = expanded.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+    }
     const parts = expanded.split('\n').filter((part) => part.length > 0);
     if (parts.length === 0) return;
     lines.push(...parts);
