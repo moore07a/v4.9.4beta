@@ -1216,6 +1216,8 @@ let logFileDrainPending = false;
 let logFileDroppedLines = 0;
 let logFileWriterClosed = false;
 let logFileClosePromise = null;
+let logFileRetryAt = 0;
+const LOG_FILE_RETRY_DELAY_MS = Math.max(250, parseInt(process.env.LOG_FILE_RETRY_DELAY_MS || "1000", 10));
 
 const OPEN_SOCKETS_WARN_THRESHOLD = Math.max(50, parseInt(process.env.OPEN_SOCKETS_WARN_THRESHOLD || "400", 10));
 const SSE_LISTENERS_WARN_THRESHOLD = Math.max(10, parseInt(process.env.SSE_LISTENERS_WARN_THRESHOLD || "120", 10));
@@ -1262,12 +1264,31 @@ function ensureLogFileStream() {
   if (!LOG_TO_FILE || logFileWriterClosed) return null;
   if (logFileStream) return logFileStream;
 
+  const now = Date.now();
+  if (now < logFileRetryAt) return null;
+
   logFileStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
   logFileStream.on("error", (err) => {
-    const now = Date.now();
-    if (now - logFileWriteErrorAt > 30000) {
-      logFileWriteErrorAt = now;
-      console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)}`);
+    const errorAt = Date.now();
+    logFileDrainPending = false;
+    logFileRetryAt = errorAt + LOG_FILE_RETRY_DELAY_MS;
+
+    const streamRef = logFileStream;
+    if (streamRef) {
+      try { streamRef.destroy(); } catch {}
+    }
+    if (logFileStream === streamRef) {
+      logFileStream = null;
+    }
+
+    if (errorAt - logFileWriteErrorAt > 30000) {
+      logFileWriteErrorAt = errorAt;
+      console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)} retryInMs=${LOG_FILE_RETRY_DELAY_MS}`);
+    }
+
+    if (!logFileWriterClosed && logFileQueue.length > 0) {
+      const retryTimer = setTimeout(() => flushLogFileQueue(), LOG_FILE_RETRY_DELAY_MS);
+      if (typeof retryTimer.unref === "function") retryTimer.unref();
     }
   });
   logFileStream.on("drain", () => {
