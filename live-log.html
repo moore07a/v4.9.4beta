@@ -82,6 +82,7 @@
     white-space:pre-wrap; word-wrap:break-word; margin:0;
     padding:1rem 1rem 1.25rem;
     height:calc(100% - 78px); overflow:auto;
+    line-height:1.55;
     border-top:1px solid #1a2333;
     background:linear-gradient(180deg,#0a101bcc,#090d16cc);
   }
@@ -218,6 +219,11 @@
     if (expanded.includes('\\n') || expanded.includes('\\r\\n')) {
       expanded = expanded.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
     }
+    // If backend concatenates entries without delimiters, split before timestamp-like prefixes.
+    expanded = expanded.replace(
+      /(?!^)(\[\d{2}-\d{2}-\d{4}\s-\s\d{2}:\d{2}:\d{2}\s(?:AM|PM)\])/g,
+      '\n$1'
+    );
     const parts = expanded.split('\n').filter((part) => part.length > 0);
     if (parts.length === 0) return;
     lines.push(...parts);
