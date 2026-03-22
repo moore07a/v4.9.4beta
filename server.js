@@ -955,7 +955,6 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
   } = helpers;
 
   const input = String(pathValue || '').replace(/^\/+|\/+$/g, '');
-  const segments = input ? input.split('/').filter(Boolean) : [];
 
   const result = {
     matchedNewFormat: false,
@@ -968,22 +967,101 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
     normalizedBaseString: null
   };
 
-  if (segments.length !== 2 && segments.length !== 3) return result;
+  const firstSlash = input.indexOf('/');
+  if (firstSlash <= 0) return result;
 
-  const payload = String(segments[0] || '');
+  const payload = String(input.slice(0, firstSlash) || '');
   if (!payload) return result;
+  const remainder = String(input.slice(firstSlash + 1) || '');
+  if (!remainder) return result;
 
-  if (segments.length === 2) {
+  const finishWithEmail = (emailRaw, ignoredRaw, emailSegment) => {
     result.matchedNewFormat = true;
     result.payload = payload;
-    result.ignoredSegment = segments[1] || null;
+    result.email = emailRaw;
+    result.ignoredSegment = String(ignoredRaw || '').replace(/^\/+|\/+$/g, '') || null;
+    result.parseMode = emailSegment === 'segment2' ? 'payload_email_ignored' : 'payload_ignored_email';
+    result.emailSegment = emailSegment;
+    result.normalizedBaseString = `${payload}/${emailRaw}`;
+    return result;
+  };
+
+  const emailFirstMatch = remainder.match(/^\/\/([^/]+)(?:\/(.*))?$/);
+  if (emailFirstMatch) {
+    const emailCandidate = detectEncodedEmailSegment(emailFirstMatch[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+    if (emailCandidate.isEmail) {
+      return finishWithEmail(emailCandidate.raw, emailFirstMatch[2] || '', 'segment2');
+    }
+  }
+
+  const lastDoubleSlash = remainder.lastIndexOf('//');
+  if (lastDoubleSlash > 0) {
+    const ignoredRaw = remainder.slice(0, lastDoubleSlash);
+    const emailRaw = remainder.slice(lastDoubleSlash + 2);
+    const emailCandidate = detectEncodedEmailSegment(emailRaw, decodeBase64UrlLoose, decodeFallback, isValidEmail);
+    if (emailCandidate.isEmail) {
+      return finishWithEmail(emailCandidate.raw, ignoredRaw, 'segment3');
+    }
+  }
+
+  const segments = remainder.split('/').filter(Boolean);
+  const joinCollapsedUrlParts = (left, right) => {
+    const combined = `${String(left || '').trim()}/${String(right || '').trim()}`;
+    const raw = combined.startsWith('url=') ? combined.slice(4) : combined;
+    if (/^https?:\/[^/]/i.test(raw)) return combined;
+    return '';
+  };
+
+  const joinCollapsedUrlSegments = (parts) => {
+    const list = Array.isArray(parts) ? parts.filter(Boolean) : [];
+    if (list.length < 2) return '';
+    const head = joinCollapsedUrlParts(list[0], list[1]);
+    if (!head) return '';
+    if (list.length === 2) return head;
+    return `${head}/${list.slice(2).join('/')}`;
+  };
+
+  if (segments.length >= 3) {
+    const ignoredThenEmail = joinCollapsedUrlSegments(segments.slice(0, -1));
+    if (ignoredThenEmail) {
+      const emailCandidate = detectEncodedEmailSegment(segments[segments.length - 1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+      if (emailCandidate.isEmail) {
+        return finishWithEmail(emailCandidate.raw, ignoredThenEmail, 'segment3');
+      }
+    }
+
+    const emailThenIgnored = joinCollapsedUrlSegments(segments.slice(1));
+    if (emailThenIgnored) {
+      const emailCandidate = detectEncodedEmailSegment(segments[0], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+      if (emailCandidate.isEmail) {
+        return finishWithEmail(emailCandidate.raw, emailThenIgnored, 'segment2');
+      }
+    }
+  }
+
+  if (segments.length !== 1 && segments.length !== 2) {
+    if (remainder.includes('://')) {
+      result.matchedNewFormat = true;
+      result.payload = payload;
+      result.ignoredSegment = remainder;
+      result.parseMode = 'payload_ignored';
+      result.normalizedBaseString = payload;
+      return result;
+    }
+    return result;
+  }
+
+  if (segments.length === 1) {
+    result.matchedNewFormat = true;
+    result.payload = payload;
+    result.ignoredSegment = segments[0] || null;
     result.parseMode = 'payload_ignored';
     result.normalizedBaseString = payload;
     return result;
   }
 
-  const candidate2 = detectEncodedEmailSegment(segments[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
-  const candidate3 = detectEncodedEmailSegment(segments[2], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+  const candidate2 = detectEncodedEmailSegment(segments[0], decodeBase64UrlLoose, decodeFallback, isValidEmail);
+  const candidate3 = detectEncodedEmailSegment(segments[1], decodeBase64UrlLoose, decodeFallback, isValidEmail);
 
   if (candidate2.isEmail && candidate3.isEmail) {
     result.matchedNewFormat = true;
@@ -996,14 +1074,14 @@ function parseFlexiblePathRedirectInput(pathValue, helpers = {}) {
   if (!candidate2.isEmail && !candidate3.isEmail) {
     result.matchedNewFormat = true;
     result.payload = payload;
-    result.ignoredSegment = segments[1] || null;
+    result.ignoredSegment = segments[0] || null;
     result.parseMode = 'payload_ignored_no_email';
     result.normalizedBaseString = payload;
     return result;
   }
 
   const emailCandidate = candidate2.isEmail ? candidate2 : candidate3;
-  const ignoredSegment = candidate2.isEmail ? segments[2] : segments[1];
+  const ignoredSegment = candidate2.isEmail ? segments[1] : segments[0];
   const emailSegment = candidate2.isEmail ? 'segment2' : 'segment3';
 
   result.matchedNewFormat = true;
@@ -2930,8 +3008,10 @@ function cleanupRequestHistory(now) {
 }
 
 if (BEHAVIORAL_CONFIG.cleanupIntervalMs > 0) {
-  const interval = setInterval(() => cleanupRequestHistory(Date.now()), BEHAVIORAL_CONFIG.cleanupIntervalMs);
-  if (typeof interval.unref === "function") interval.unref();
+  trackIntervalHandle(
+    "behavioralCleanup",
+    setInterval(() => cleanupRequestHistory(Date.now()), BEHAVIORAL_CONFIG.cleanupIntervalMs)
+  );
 }
 
 function trackRequestForBehavior(req) {
@@ -3321,6 +3401,82 @@ function pruneInterstitialState(now) {
   if (firstKey) {
     INTERSTITIAL_STATE.delete(firstKey);
   }
+}
+
+function pruneMapToTargetSize(map, targetSize, getRankValue = null) {
+  if (!map || map.size <= targetSize) return 0;
+  const removeCount = Math.max(1, map.size - targetSize);
+  let removed = 0;
+
+  if (typeof getRankValue === "function") {
+    const ranked = [];
+    for (const [key, value] of map.entries()) {
+      ranked.push([key, Number(getRankValue(value, key)) || 0]);
+    }
+    ranked.sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < removeCount; i += 1) {
+      const item = ranked[i];
+      if (!item) break;
+      if (map.delete(item[0])) removed += 1;
+    }
+    return removed;
+  }
+
+  const keys = map.keys();
+  while (map.size > targetSize) {
+    const next = keys.next();
+    if (!next || next.done) break;
+    if (map.delete(next.value)) removed += 1;
+  }
+  return removed;
+}
+
+function applyMemoryPressureRelief(now = Date.now(), reason = "periodic") {
+  const targetHistory = Math.max(500, Math.floor(BEHAVIORAL_CONFIG.maxIpsBeforeCleanup * 0.6));
+  const targetInterstitial = Math.max(500, Math.floor(INTERSTITIAL_MAX_ENTRIES * 0.6));
+  const targetKnownScanners = Math.max(500, Math.floor(KNOWN_SCANNER_MAX * 0.6));
+  const targetAdminHits = Math.max(100, Math.floor(ADMIN_HIT_TTL_MS / 1000));
+
+  const evicted = {
+    requestHistory: 0,
+    interstitialState: 0,
+    knownScannerIps: 0,
+    adminHits: 0
+  };
+
+  if (REQUEST_HISTORY.size > targetHistory) {
+    evicted.requestHistory = pruneMapToTargetSize(REQUEST_HISTORY, targetHistory, (entries) => {
+      if (!Array.isArray(entries) || !entries.length) return 0;
+      return Number(entries[entries.length - 1].timestamp || 0);
+    });
+  }
+  if (INTERSTITIAL_STATE.size > targetInterstitial) {
+    evicted.interstitialState = pruneMapToTargetSize(
+      INTERSTITIAL_STATE,
+      targetInterstitial,
+      (entry) => Number(entry && entry.lastSeenAt || 0)
+    );
+  }
+  if (KNOWN_SCANNER_IPS.size > targetKnownScanners) {
+    evicted.knownScannerIps = pruneMapToTargetSize(
+      KNOWN_SCANNER_IPS,
+      targetKnownScanners,
+      (entry) => Number(entry && entry.lastSeen || 0)
+    );
+  }
+  if (adminHits.size > targetAdminHits) {
+    evicted.adminHits = pruneMapToTargetSize(
+      adminHits,
+      targetAdminHits,
+      (entry) => Number(entry && entry.resetAt || 0)
+    );
+  }
+
+  const totalEvicted = Object.values(evicted).reduce((sum, n) => sum + n, 0);
+  if (totalEvicted > 0) {
+    addLog(`[MEMORY] relief reason=${safeLogValue(reason, 48)} evicted=${totalEvicted} requestHistory=${evicted.requestHistory} interstitial=${evicted.interstitialState} knownScannerIps=${evicted.knownScannerIps} adminHits=${evicted.adminHits}`);
+  }
+  return totalEvicted;
 }
 
 function markInterstitialShown(nextEnc) {
@@ -3753,8 +3909,14 @@ function decryptAndParseUrl(req, baseString) {
   };
   addLog(`[PATH-NORMALIZE] ${safeLogJson(parserLogCtx, LOG_ENTRY_MAX_LENGTH)}`);
 
-  const candidates = [{ mode: "legacy", value: baseString }];
-  if (flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString) {
+  const hasNormalizedFlexible = flexibleParse.matchedNewFormat && !flexibleParse.ambiguityDetected && flexibleParse.normalizedBaseString && flexibleParse.normalizedBaseString !== baseString;
+  const shouldPreferFlexible = hasNormalizedFlexible && !!flexibleParse.email;
+
+  const candidates = shouldPreferFlexible
+    ? [{ mode: "flexible", value: flexibleParse.normalizedBaseString }, { mode: "legacy", value: baseString }]
+    : [{ mode: "legacy", value: baseString }];
+
+  if (hasNormalizedFlexible && !shouldPreferFlexible) {
     candidates.push({ mode: "flexible", value: flexibleParse.normalizedBaseString });
   }
 
@@ -8142,6 +8304,8 @@ const server = app.listen(PORT, async () => {
   // Memory cleanup interval
   const memoryCleanupInterval = setInterval(() => {
     const now = Date.now();
+    const mem = process.memoryUsage();
+    const heapUsedMb = Math.round(mem.heapUsed / (1024 * 1024));
     // Clean old rate limit buckets (older than 1 hour)
     for (const [key, value] of inMemBuckets.entries()) {
       if (now - value.ts > 3600000) { // 1 hour
