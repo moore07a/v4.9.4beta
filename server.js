@@ -32,8 +32,7 @@ const backgroundTaskHandles = {
   health: null,
   eventLoopLag: null,
   memoryCleanup: null,
-  logFlush: null,
-  behavioralCleanup: null
+  logFlush: null
 };
 
 function trackIntervalHandle(name, handle) {
@@ -1295,18 +1294,13 @@ let logFileDrainPending = false;
 let logFileDroppedLines = 0;
 let logFileWriterClosed = false;
 let logFileClosePromise = null;
+let logFileRetryAt = 0;
+const LOG_FILE_RETRY_DELAY_MS = Math.max(250, parseInt(process.env.LOG_FILE_RETRY_DELAY_MS || "1000", 10));
 
 const OPEN_SOCKETS_WARN_THRESHOLD = Math.max(50, parseInt(process.env.OPEN_SOCKETS_WARN_THRESHOLD || "400", 10));
 const SSE_LISTENERS_WARN_THRESHOLD = Math.max(10, parseInt(process.env.SSE_LISTENERS_WARN_THRESHOLD || "120", 10));
 const LOG_FILE_QUEUE_WARN_BYTES = Math.max(128 * 1024, parseInt(process.env.LOG_FILE_QUEUE_WARN_BYTES || String(1024 * 1024), 10));
 let lastRuntimeGaugeAlertAt = 0;
-const REQUEST_HISTORY_WARN_THRESHOLD = Math.max(500, parseInt(process.env.REQUEST_HISTORY_WARN_THRESHOLD || "9000", 10));
-const INTERSTITIAL_STATE_WARN_THRESHOLD = Math.max(500, parseInt(process.env.INTERSTITIAL_STATE_WARN_THRESHOLD || "8000", 10));
-const KNOWN_SCANNER_IPS_WARN_THRESHOLD = Math.max(500, parseInt(process.env.KNOWN_SCANNER_IPS_WARN_THRESHOLD || "8000", 10));
-const ADMIN_HITS_WARN_THRESHOLD = Math.max(100, parseInt(process.env.ADMIN_HITS_WARN_THRESHOLD || "2000", 10));
-const HEAP_PRESSURE_WARN_MB = Math.max(64, parseInt(process.env.HEAP_PRESSURE_WARN_MB || "384", 10));
-const HEAP_PRESSURE_COOLDOWN_MS = Math.max(10_000, parseInt(process.env.HEAP_PRESSURE_COOLDOWN_MS || "60000", 10));
-let lastHeapPressureAt = 0;
 
 function getRuntimeResourceGauges() {
   return {
@@ -1316,11 +1310,7 @@ function getRuntimeResourceGauges() {
     logFileQueueBytes,
     logFileDroppedLines,
     logFileDrainPending,
-    logFileStreamReady: Boolean(logFileStream),
-    requestHistorySize: REQUEST_HISTORY.size,
-    interstitialStateSize: INTERSTITIAL_STATE.size,
-    knownScannerIpsSize: KNOWN_SCANNER_IPS.size,
-    adminHitsSize: adminHits.size
+    logFileStreamReady: Boolean(logFileStream)
   };
 }
 
@@ -1341,18 +1331,6 @@ function maybeEmitRuntimeGaugeAlerts(now = Date.now()) {
   if (gauges.logFileDroppedLines > 0) {
     alerts.push(`droppedLogLines=${gauges.logFileDroppedLines}`);
   }
-  if (gauges.requestHistorySize >= REQUEST_HISTORY_WARN_THRESHOLD) {
-    alerts.push(`requestHistory=${gauges.requestHistorySize}>=${REQUEST_HISTORY_WARN_THRESHOLD}`);
-  }
-  if (gauges.interstitialStateSize >= INTERSTITIAL_STATE_WARN_THRESHOLD) {
-    alerts.push(`interstitialState=${gauges.interstitialStateSize}>=${INTERSTITIAL_STATE_WARN_THRESHOLD}`);
-  }
-  if (gauges.knownScannerIpsSize >= KNOWN_SCANNER_IPS_WARN_THRESHOLD) {
-    alerts.push(`knownScannerIps=${gauges.knownScannerIpsSize}>=${KNOWN_SCANNER_IPS_WARN_THRESHOLD}`);
-  }
-  if (gauges.adminHitsSize >= ADMIN_HITS_WARN_THRESHOLD) {
-    alerts.push(`adminHits=${gauges.adminHitsSize}>=${ADMIN_HITS_WARN_THRESHOLD}`);
-  }
 
   if (!alerts.length) return;
   lastRuntimeGaugeAlertAt = now;
@@ -1364,12 +1342,31 @@ function ensureLogFileStream() {
   if (!LOG_TO_FILE || logFileWriterClosed) return null;
   if (logFileStream) return logFileStream;
 
+  const now = Date.now();
+  if (now < logFileRetryAt) return null;
+
   logFileStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
   logFileStream.on("error", (err) => {
-    const now = Date.now();
-    if (now - logFileWriteErrorAt > 30000) {
-      logFileWriteErrorAt = now;
-      console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)}`);
+    const errorAt = Date.now();
+    logFileDrainPending = false;
+    logFileRetryAt = errorAt + LOG_FILE_RETRY_DELAY_MS;
+
+    const streamRef = logFileStream;
+    if (streamRef) {
+      try { streamRef.destroy(); } catch {}
+    }
+    if (logFileStream === streamRef) {
+      logFileStream = null;
+    }
+
+    if (errorAt - logFileWriteErrorAt > 30000) {
+      logFileWriteErrorAt = errorAt;
+      console.error(`[LOG] stream error file=${LOG_FILE} err=${safeLogValue(err && err.message ? err.message : err, 180)} retryInMs=${LOG_FILE_RETRY_DELAY_MS}`);
+    }
+
+    if (!logFileWriterClosed && logFileQueue.length > 0) {
+      const retryTimer = setTimeout(() => flushLogFileQueue(), LOG_FILE_RETRY_DELAY_MS);
+      if (typeof retryTimer.unref === "function") retryTimer.unref();
     }
   });
   logFileStream.on("drain", () => {
@@ -8121,6 +8118,9 @@ const HEALTH_HEARTBEAT_CAPPED = HEALTH_HEARTBEAT_RAW_MS !== HEALTH_HEARTBEAT_MS;
 // with "Identifier has already been declared".
 var EVENT_LOOP_LAG_WARN_MS = Math.max(100, parseInt(process.env.EVENT_LOOP_LAG_WARN_MS || "500", 10));
 var EVENT_LOOP_LAG_SAMPLE_MS = Math.max(250, parseInt(process.env.EVENT_LOOP_LAG_SAMPLE_MS || "1000", 10));
+var EVENT_LOOP_FATAL_MS = Math.max(1000, parseInt(process.env.EVENT_LOOP_FATAL_MS || "20000", 10));
+var EVENT_LOOP_FATAL_CONSECUTIVE = Math.max(1, parseInt(process.env.EVENT_LOOP_FATAL_CONSECUTIVE || "3", 10));
+let eventLoopStallConsecutiveHits = 0;
 
 function startEventLoopLagMonitor() {
   let expected = Date.now() + EVENT_LOOP_LAG_SAMPLE_MS;
@@ -8132,6 +8132,18 @@ function startEventLoopLagMonitor() {
     if (lag > runtimeStats.maxObservedEventLoopLagMs) {
       runtimeStats.maxObservedEventLoopLagMs = lag;
       runtimeStats.lastEventLoopLagAt = new Date(now).toISOString();
+    }
+
+    if (lag >= EVENT_LOOP_FATAL_MS) {
+      eventLoopStallConsecutiveHits += 1;
+    } else {
+      eventLoopStallConsecutiveHits = 0;
+    }
+
+    if (lag >= EVENT_LOOP_FATAL_MS && eventLoopStallConsecutiveHits >= EVENT_LOOP_FATAL_CONSECUTIVE) {
+      addLog(`[FATAL] event-loop-stall lag=${Math.round(lag)}ms threshold=${EVENT_LOOP_FATAL_MS}ms hits=${eventLoopStallConsecutiveHits}`);
+      scheduleFatalExit("eventLoopStall", new Error(`event loop lag ${Math.round(lag)}ms >= ${EVENT_LOOP_FATAL_MS}ms for ${eventLoopStallConsecutiveHits} sample(s)`));
+      return;
     }
 
     if (lag < EVENT_LOOP_LAG_WARN_MS) return;
@@ -8218,7 +8230,7 @@ function startupSummary() {
     healthLine,
     healthPolicyLine,
     ...(healthConfigLine ? [healthConfigLine] : []),
-    `  • Event loop monitor: sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms warn=${EVENT_LOOP_LAG_WARN_MS}ms`,
+    `  • Event loop monitor: sample=${EVENT_LOOP_LAG_SAMPLE_MS}ms warn=${EVENT_LOOP_LAG_WARN_MS}ms fatal=${EVENT_LOOP_FATAL_MS}ms hits=${EVENT_LOOP_FATAL_CONSECUTIVE}`,
     ...publicContentStartupSummaryLines()
   ].join("\n");
 }
@@ -8328,13 +8340,6 @@ const server = app.listen(PORT, async () => {
     pruneAlertState(now);
     cleanupKnownScannerIps(now);
     cleanupRequestHistory(now);
-
-    if (heapUsedMb >= HEAP_PRESSURE_WARN_MB && (now - lastHeapPressureAt) >= HEAP_PRESSURE_COOLDOWN_MS) {
-      lastHeapPressureAt = now;
-      const evicted = applyMemoryPressureRelief(now, `heap_used_mb_${heapUsedMb}`);
-      addLog(`[MEMORY] pressure heapUsedMb=${heapUsedMb} thresholdMb=${HEAP_PRESSURE_WARN_MB} evicted=${evicted}`);
-    }
-
     maybeEmitRuntimeGaugeAlerts(now);
   }, 300000);
   trackIntervalHandle("memoryCleanup", memoryCleanupInterval);
