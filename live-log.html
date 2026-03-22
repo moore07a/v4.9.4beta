@@ -204,7 +204,14 @@
 
   function pushLine(line) {
     if (!line) return;
-    lines.push(line);
+    const expanded = String(line)
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+    const parts = expanded.split('\n').filter((part) => part.length > 0);
+    if (parts.length === 0) return;
+    lines.push(...parts);
     if (lines.length > MAX_LINES) {
       dropped += (lines.length - MAX_LINES);
       lines.splice(0, lines.length - MAX_LINES);
